@@ -35,10 +35,21 @@ class ChatHistoryManager:
 
     def __init__(self):
         load_dotenv()
-        #self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
-        self.gemini = GenerativeModel('gemini-pro')
+
+    def __init__(self):
+        load_dotenv()
+        if os.getenv('OPENAI_API_KEY'):
+            self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            self.dalle_enabled = True
+        else:
+            self.dalle_enabled = False
+
+        if os.getenv('ANTHROPIC_API_KEY'):
+            self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+
+        if os.getenv('GOOGLE_API_KEY'):
+            genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+            self.gemini = GenerativeModel('gemini-pro')
         self.history_dir = Path("chat_histories")
         self.exports_dir = Path("exports")
         self.history_dir.mkdir(exist_ok=True)
