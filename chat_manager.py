@@ -35,7 +35,7 @@ class ChatHistoryManager:
 
     def __init__(self):
         load_dotenv()
-        self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        #self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
         self.gemini = GenerativeModel('gemini-pro')

@@ -31,7 +31,7 @@ class ChatHistoryManager:
         self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
         #self.gemini = GenerativeModel('gemini-pro')
-        self.history_dir = Path("chat_histories")
+        self.history_dir = Path("../chat_histories")
         self.history_dir.mkdir(exist_ok=True)
         self.gpt_encoder = tiktoken.encoding_for_model("gpt-4")
 
@@ -72,7 +72,7 @@ Provide a concise analysis covering:
         """
            Logs metadata and analysis summary for uploaded files to a central log file for reference.
            """
-        log_file = Path("file_analysis_log.txt")
+        log_file = Path("../file_analysis_log.txt")
         with open(log_file, "a", encoding="utf-8") as f:
             log_entry = f"[{datetime.now().isoformat()}] File: {file_name}, Language: {language}\nAnalysis:\n{analysis_summary}\n\n"
             f.write(log_entry)
@@ -179,7 +179,7 @@ Provide a concise analysis covering:
 
     def export_conversation(self, conv_id, format="json"):
         conv = self.get_conversation(conv_id)
-        export_dir = Path("exports")
+        export_dir = Path("../exports")
         export_dir.mkdir(exist_ok=True)
 
         filename = f"{conv['title']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -202,7 +202,7 @@ Provide a concise analysis covering:
         return [(i, msg) for i, msg in enumerate(conv["messages"]) if "```" in msg["content"]]
 
     def export_selected_code(self, conv_id, selected_indices):
-        export_dir = Path("code_exports")
+        export_dir = Path("../code_exports")
         export_dir.mkdir(exist_ok=True)
 
         conv = self.get_conversation(conv_id)

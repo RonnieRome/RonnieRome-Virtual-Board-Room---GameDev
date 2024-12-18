@@ -124,7 +124,7 @@ def main():
             """
     }
 
-    BACKGROUND_DIR = "backgrounds"
+    BACKGROUND_DIR = "../backgrounds"
 
     # Ensure the directory exists
     if not os.path.exists(BACKGROUND_DIR):
