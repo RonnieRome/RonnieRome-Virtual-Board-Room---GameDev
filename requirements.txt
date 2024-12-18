@@ -1,9 +1,9 @@
-openai~=1.57.4
 streamlit==1.41.1
-pillow~=11.0.0
-python-dotenv~=1.0.1
+openai~=1.57.4
 anthropic~=0.40.0
-tiktoken~=0.8.0
+google-generativeai==0.3.2
+python-dotenv~=1.0.1
 pyperclip~=1.9.0
-protobuf~=5.29.1
-google-generativeai~=0.3.2
+Pillow~=11.0.0
+tiktoken~=0.8.0
+protobuf>=3.20,<6
