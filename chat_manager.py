@@ -35,7 +35,7 @@ class ChatHistoryManager:
 
     def __init__(self):
         load_dotenv()
-        self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        #self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
         self.gemini = GenerativeModel('gemini-pro')
@@ -98,7 +98,7 @@ class ChatHistoryManager:
             return image_b64
 
         except Exception as e:
-            print(f"DALL-E Error: {str(e)}")
+            #print(f"DALL-E Error: {str(e)}")
             return None
 
     def analyze_code(self, content, language, max_length=8000):
