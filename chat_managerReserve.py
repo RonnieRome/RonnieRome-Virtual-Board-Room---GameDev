@@ -29,7 +29,7 @@ class ChatHistoryManager:
         load_dotenv()
         self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-        #genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
         #self.gemini = GenerativeModel('gemini-pro')
         self.history_dir = Path("chat_histories")
         self.history_dir.mkdir(exist_ok=True)
