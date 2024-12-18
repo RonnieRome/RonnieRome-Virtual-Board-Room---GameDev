@@ -3,6 +3,5 @@ chat_histories/
 exports/
 __pycache__/
 *.pyc
-backgrounds
 .venv
 Reserve
