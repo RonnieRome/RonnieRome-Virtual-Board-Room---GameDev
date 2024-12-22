@@ -1,9 +1,13 @@
-import streamlit as st
-import io, base64, os
-import pyperclip
-import streamlit.components.v1 as components
-from PIL import Image
+import base64
+import requests
+import io
+import os
 from io import BytesIO
+
+import pyperclip  # Make sure to install pyperclip using `pip install pyperclip` before running the script.
+import streamlit as st
+from PIL import Image
+
 from chat_manager import ChatHistoryManager
 
 
@@ -41,9 +45,67 @@ def handle_multiple_files(files, manager):
     return stored_files
 
 
+def calculate_tokens(messages):
+    totals = {
+        'total': 0,
+        'claude': 0,
+        'chatgpt': 0,
+        'dalle': 0,
+        'gemini': 0,
+        'input': 0
+    }
+    if not messages:
+        return totals
+
+    for msg in messages:
+        try:
+            tokens = int(msg.get('tokens', 0))
+            totals['total'] += tokens
+
+            if msg['sender'] == 'user':
+                totals['input'] += tokens
+
+            ai_service = msg.get('ai_service', '')
+            if ai_service:
+                service_key = ai_service.lower()
+                if service_key in totals:
+                    totals[service_key] += tokens
+        except (ValueError, TypeError):
+            continue
+
+    return totals
+
+
+def update_token_display(st, conversation):
+    token_counts = calculate_tokens(conversation.get('messages', []))
+
+    with st.sidebar:
+        st.divider()
+        cols_services = st.columns(4)
+        services = [('Claude', 'claude'), ('ChatGPT', 'chatgpt'),
+                    ('DALL-E', 'dalle'), ('Gemini', 'gemini')]
+
+        for i, (name, key) in enumerate(services):
+            with cols_services[i]:
+                st.markdown(f"<div class='ai-service-box'><small>{name}</small></div>",
+                            unsafe_allow_html=True)
+                st.markdown(f"<div class='ai-service-box'><small>{token_counts[key]}</small></div>",
+                            unsafe_allow_html=True)
+
+        st.divider()
+        cols_totals = st.columns(2)
+        with cols_totals[0]:
+            st.markdown("**Input**")
+            st.markdown(f"### {token_counts['input']}")
+        with cols_totals[1]:
+            st.markdown("**Total**")
+            st.markdown(f"### {token_counts['total']}")
+
+
 def main():
-    st.set_page_config(page_title="AI Virtual Board Room - GameDev", layout="wide")
-    for key in ['show_title_input', 'selected_conv', 'messages', 'ai_service', 'analysis_results', 'show_code_popup', 'theme']:
+    st.set_page_config(page_title="RonnieRome Virtual Board Room - GameDev", layout="wide")
+    for key in ['show_title_input', 'selected_conv', 'messages', 'ai_service', 'analysis_results', 'show_code_popup',
+                'theme']:
         if key not in st.session_state:
             if key == 'show_title_input':
                 st.session_state[key] = True
@@ -59,7 +121,7 @@ def main():
                 st.session_state[key] = "Claude"
 
     manager = ChatHistoryManager()
-    st.title("AI Virtual Board Room - GameDev")
+    st.title("RonnieRome Virtual Board Room - GameDev")
 
     st.markdown("""
         <style>
@@ -75,126 +137,141 @@ def main():
     THEMES = {
         "Sabbath Black": """
             <style>
-            .stApp, .block-container {
-                background-color: #000000;
-                color: #ffffff;
-                font-family: "Rock Salt", cursive;
+            @import url('https://fonts.googleapis.com/css2?family=Rock+Salt&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+            * {
+                font-family: 'Roboto', cursive !important;
+            }
+
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background-color: #000000 !important; /* Pure black */
+                color: #ffffff !important;
+                background-color: #000000 !important; /* Pure black */
+            }
+
+            /* Main app background */
+                background-color: #000000 !important; /* Pure black */
+                color: #ffffff !important;
+                color: #ffffff !important;
             }
             </style>
-            """,
+        """,
+
         "Greenday": """
             <style>
-            .stApp, .block-container {
-                background-color: #002b36;
-                color: #b58900;
-                font-family: "Roboto", sans-serif;
+            @import url('https://fonts.googleapis.com/css2?family=Finger+Paint&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+            * {
+                font-family: 'Finger Paint', cursive !important;
+            }
+
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background-color: #002b36 !important;
+                color: #b58900 !important;
+            }
+
+            /* Main app background */
+            .stApp {
+                background: linear-gradient(to bottom, #003847, #004d5b 75%, #a6895b) !important; /* Adjusted gradient for smooth transition with brown */
+                color: #b58900 !important;
             }
             </style>
-            """,
+        """,
+
         "Pastel Elegance": """
             <style>
-            .stApp, .block-container {
-                background-color: #ffe5e5;
-                color: #d4af37;
-                font-family: "Dancing Script", cursive;
+            @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+            * {
+                font-family: 'Dancing Script', cursive !important;
+            }
+
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background-color: #b30041 !important; /* Updated to red rose color */
+                color: #d4af37 !important;
+            }
+
+            /* Main app background */
+            .stApp {
+                background-color: #b50050 !important; /* Slightly different shade than its sidebar */
+                color: #d4af37 !important;
             }
             </style>
-            """,
+        """,
+
         "Futuristic Metal": """
             <style>
-            .stApp, .block-container {
-                background: linear-gradient(45deg, #333333, #666666);
-                color: #00ffff;
-                font-family: "Orbitron", sans-serif;
+            @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+            * {
+                font-family: 'Orbitron', sans-serif !important;
             }
-            </style>
-            """,
-        "Transparent": """
-            <style>
+
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background: linear-gradient(45deg, #333333, #666666) !important;
+                color: #00ffff !important;
+            }
+
+            /* Main app background */
             .stApp {
-                background: transparent;
-                font-family: "Arial", sans-serif;
-            }
-            .block-container {
-                background-color: transparent;
-                backdrop-filter: blur(10px);
-                -webkit-backdrop-filter: blur(10px);
+                background: linear-gradient(45deg, #333333, #666666) !important; /* Match sidebar background */
+                color: #00ffff !important;
             }
             </style>
-            """
+        """,
+
+        "Saturn": """
+            <style>
+            @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+
+            * {
+                font-family: 'Great Vibes', cursive !important;
+            }
+
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background: linear-gradient(to bottom, #baa8a0, #7e5e5c, #99ccee) !important; /* Smooth Saturn ring colors with subtle blue tint */
+                color: #d4af37 !important;
+            }
+
+            /* Main app background */
+            .stApp {
+                background: linear-gradient(to bottom, #452850, #4f3d68, #946648, #e0c8a3, #91c8de, #003366) !important; /* Adjusted gradient for darker and pastel tones */
+                background-size: 100% 80%; /* Reduced the size of the brown gradient */
+                color: #d4af37 !important;
+
+            /* Saturn ring blurred strip */
+            .stApp::before {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 0;
+                width: 100%;
+                height: 15px;
+                background: linear-gradient(to right, rgba(186, 168, 160, 0.5), rgba(126, 94, 92, 0.2), rgba(126, 94, 92, 0.5));
+                filter: blur(8px);
+                z-index: 0;
+            }
+
+            </style>
+        """
     }
 
-    BACKGROUND_DIR = "../backgrounds"
-
-    # Ensure the directory exists
-    if not os.path.exists(BACKGROUND_DIR):
-        os.makedirs(BACKGROUND_DIR)
-
-    background_images = [f for f in os.listdir(BACKGROUND_DIR) if f.endswith((".jpg", ".jpeg", ".png"))]
-
-    if not background_images:
-        st.warning("No background images found in the 'backgrounds' folder. Please add some images.")
-        background_images = ["None"]
-
-    # Function to encode the selected image to base64
-    def get_base64_image(image_path):
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-
-    # Create two columns with equal width
-    col1, col2 = st.columns(2)
-
     # Select Theme dropdown
-    with col1:
-        theme_choice = st.selectbox("Select Theme", list(THEMES.keys()), key="theme_choice")
-
-    # Select Background Image dropdown
-    with col2:
-        selected_bg = st.selectbox("Select Background Image", ["None"] + background_images, key="bg_choice")
-
-    # Apply the selected theme
+    theme_choice = st.selectbox("Select Theme", list(THEMES.keys()), key="theme_choice")
     st.session_state.theme = theme_choice
     current_theme = st.session_state.get("theme", "Sabbath Black")
     st.markdown(THEMES[current_theme], unsafe_allow_html=True)
-
-    # Apply the selected background using custom CSS
-    if selected_bg != "None":
-        bg_path = os.path.join(BACKGROUND_DIR, selected_bg)
-        bg_base64 = get_base64_image(bg_path)
-        st.markdown(
-            f"""
-            <style>
-            .stApp::before {{
-            content: "";
-            background-image: url("data:image/png;base64,{bg_base64}");
-            background-size: cover;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-            background-position: center;
-            opacity: 0.9;  /* 50% transparency */
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: -1;  /* Place it behind the content */
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        # If "None" is selected, use a default background color
-        st.markdown(
-            """
-            <style>
-            body {
-                background-color: #1e1e1e;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
 
     st.markdown("<hr style='height: 1px; border: none; background-color: #ddd; margin-top: 0px; margin-bottom: 0px;'>",
                 unsafe_allow_html=True)
@@ -239,11 +316,25 @@ def main():
                 st.error(f"Clipboard error: {e}")
 
         if st.session_state.show_title_input:
-            col1, col2 = st.columns([3, 1])
+            col1, col2 = st.columns([3, 2])
             with col1:
                 title = st.text_input("Chat Title")
             with col2:
-                if st.button("➕ Start New Chat"):
+                st.markdown("""
+                    <style>
+                    .button-shrink > button {
+                        white-space: pre-wrap; /* Allow wrapping */
+                        word-wrap: break-word; /* Break words when needed */
+                        font-size: 1px !important; /* Adjust font size */
+                        line-height: 1.2; /* Add spacing between lines */
+                        text-align: center; /* Center align text */
+                        padding: 8px 10px; /* Add padding for better UI */
+                        height: auto; /* Resize height dynamically */
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                if st.button("➕ Start\nNew\nChat",
+                             key="start_new_chat", use_container_width=True):
                     if title:
                         st.session_state.selected_conv = manager.create_conversation(title)
                         st.session_state.show_title_input = False
@@ -278,108 +369,109 @@ def main():
     # Main content area
     if st.session_state.selected_conv:
         conversation = manager.get_conversation(st.session_state.selected_conv)
-        st.caption(f"Current Chat: {conversation['title']}")
+        if conversation:
+            st.caption(f"Current Chat: {conversation['title']}")
 
-        # Export buttons
-        export_col1, export_col2, export_col3, export_col4 = st.columns(4)
-        with export_col1:
-            if st.button("Export JSON"):
-                content = manager.export_conversation(st.session_state.selected_conv, "json")
-                if content:
-                    st.download_button("Download JSON", content, f"{st.session_state.selected_conv}.json")
-        with export_col2:
-            if st.button("Export Chat"):
-                content = manager.export_conversation(st.session_state.selected_conv, "txt")
-                if content:
-                    st.download_button("Download Chat", content, f"{st.session_state.selected_conv}.txt")
-        with export_col3:
-            if st.button("Export Code"):
-                code_msgs = manager.extract_code_messages(st.session_state.selected_conv)
-                if code_msgs:
-                    options = [f"Message {i}: {msg['content'][:50]}..." for i, msg in code_msgs]
-                    selected = st.multiselect("Select code to export:", options)
-                    if selected and st.button("Export Selected"):
-                        indices = [code_msgs[i][0] for i in range(len(code_msgs)) if options[i] in selected]
-                        exported = manager.export_selected_code(st.session_state.selected_conv, indices)
-                        st.success(f"Exported {len(exported)} code snippets")
-        with export_col4:
-            if st.button("Export Images"):
-                conversation = manager.get_conversation(st.session_state.selected_conv)
-                image_messages = [msg for msg in conversation['messages'] if msg.get('image_data')]
-                if image_messages:
-                    for i, msg in enumerate(image_messages):
-                        filename = f"image_{i}.png"
-                        if msg.get('image_data'):
-                            st.download_button(
-                                f"Download {filename}",
-                                base64.b64decode(msg['image_data']),
-                                filename,
-                                mime="image/png",
-                                key=f"download_img_{i}"
-                            )
+            # Export buttons
+            export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+            with export_col1:
+                if st.button("Export JSON"):
+                    content = manager.export_conversation(st.session_state.selected_conv, "json")
+                    if content:
+                        st.download_button("Download JSON", content, f"{st.session_state.selected_conv}.json")
+            with export_col2:
+                if st.button("Export Chat"):
+                    content = manager.export_conversation(st.session_state.selected_conv, "txt")
+                    if content:
+                        st.download_button("Download Chat", content, f"{st.session_state.selected_conv}.txt")
+            with export_col3:
+                if st.button("Export Code"):
+                    code_msgs = manager.extract_code_messages(st.session_state.selected_conv)
+                    if code_msgs:
+                        options = [f"Message {i}: {msg['content'][:50]}..." for i, msg in code_msgs]
+                        selected = st.multiselect("Select code to export:", options)
+                        if selected and st.button("Export Selected"):
+                            indices = [code_msgs[i][0] for i in range(len(code_msgs)) if options[i] in selected]
+                            exported = manager.export_selected_code(st.session_state.selected_conv, indices)
+                            st.success(f"Exported {len(exported)} code snippets")
+            with export_col4:
+                if st.button("Export Images"):
+                    conversation = manager.get_conversation(st.session_state.selected_conv)
+                    image_messages = [msg for msg in conversation['messages'] if msg.get('image_data')]
+                    if image_messages:
+                        for i, msg in enumerate(image_messages):
+                            filename = f"image_{i}.png"
+                            if msg.get('image_data'):
+                                st.download_button(
+                                    f"Download {filename}",
+                                    base64.b64decode(msg['image_data']),
+                                    filename,
+                                    mime="image/png",
+                                    key=f"download_img_{i}"
+                                )
 
-        # Handle uploaded files and display conversation
-        if uploaded_files and submit_button:
-            try:
-                stored_files = handle_multiple_files(uploaded_files, manager)
-                if st.session_state.selected_conv:
-                    analysis_results = []
-                    for file in stored_files:
-                        if file['type'] == 'image':
-                            analysis = f"Image file uploaded: {file['name']} (Format: {file['format']})"
-                            analysis_results.append({
-                                'name': file['name'],
-                                'language': 'image',
-                                'analysis': analysis
-                            })
-                        else:
-                            analysis = manager.analyze_code(file['content'], file['language'])
-                            analysis_results.append({
-                                'name': file['name'],
-                                'language': file['language'],
-                                'analysis': analysis
-                            })
+            if uploaded_files and submit_button:
+                try:
+                    stored_files = handle_multiple_files(uploaded_files, manager)
+                    if st.session_state.selected_conv:
+                        analysis_results = []
+                        for file in stored_files:
+                            if file['type'] == 'image':
+                                analysis = f"Image file uploaded: {file['name']} (Format: {file['format']})"
+                                analysis_results.append({
+                                    'name': file['name'],
+                                    'language': 'image',
+                                    'analysis': analysis
+                                })
+                            else:
+                                analysis = manager.analyze_code(file['content'], file['language'])
+                                analysis_results.append({
+                                    'name': file['name'],
+                                    'language': file['language'],
+                                    'analysis': analysis
+                                })
 
-                        metadata_message = f"File uploaded: {file['name']} ({file['type']})"
-                        manager.add_message(st.session_state.selected_conv, metadata_message, "user")
+                            metadata_message = f"File uploaded: {file['name']} ({file['type']})"
+                            manager.add_message(st.session_state.selected_conv, metadata_message, "user")
 
-                        if file['type'] == 'text':
-                            manager.log_file_analysis(file['name'], file['language'], analysis)
+                            if file['type'] == 'text':
+                                manager.log_file_analysis(file['name'], file['language'], analysis)
 
-                    st.session_state.analysis_results = analysis_results
-                    st.success("Files successfully uploaded.")
+                        st.session_state.analysis_results = analysis_results
+                        st.success("Files successfully uploaded.")
 
-                    for file in stored_files:
-                        if file['type'] == 'image':
-                            st.image(base64.b64decode(file['content']),
-                                     caption=file['name'],
-                                     use_container_width=True)
+                        for file in stored_files:
+                            if file['type'] == 'image':
+                                st.image(base64.b64decode(file['content']),
+                                         caption=file['name'],
+                                         use_container_width=True)
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-        if st.session_state.analysis_results:
-            with st.expander("View Analysis Results"):
-                for result in st.session_state.analysis_results:
-                    st.markdown(f"**Analysis for {result['name']} ({result['language']}):**\n{result['analysis']}")
+            if st.session_state.analysis_results:
+                with st.expander("View Analysis Results"):
+                    for result in st.session_state.analysis_results:
+                        st.markdown(f"**Analysis for {result['name']} ({result['language']}):**\n{result['analysis']}")
 
         # Token counting
         total_tokens = claude_tokens = gpt_tokens = dalle_tokens = gemini_tokens = input_tokens = 0
 
         # Display messages and count tokens
-        for msg in conversation['messages']:
-            with st.chat_message(msg['sender']):
-                if msg.get('image_data'):
-                    st.image(base64.b64decode(msg['image_data']), use_container_width=True)
-                st.write(msg['content'])
+        if not conversation or 'messages' not in conversation or len(conversation['messages']) == 0:
+            total_tokens = 0
+        else:
+            # Process conversation messages safely
+            for msg in conversation['messages']:
+                with st.chat_message(msg['sender']):
+                    if msg.get('image_data'):
+                        st.image(base64.b64decode(msg['image_data']), use_container_width=True)
+                    st.write(msg['content'])
 
-                tokens = msg.get('tokens', 0)
-                total_tokens += tokens
-
-                # Count tokens based on message type
-                if msg['sender'] == 'user':
-                    input_tokens += tokens
-
+                    tokens = msg.get('tokens', 0)
+                    if tokens is None or not isinstance(tokens, (int, float)):
+                        tokens = 0
+                    total_tokens += tokens
                 # Count AI service tokens
                 if msg.get('ai_service') == 'claude':
                     claude_tokens += tokens
@@ -390,34 +482,58 @@ def main():
                 elif msg.get('ai_service') == 'gemini':
                     gemini_tokens += tokens
 
-                st.caption(f"Model: {msg.get('model', 'user')} | Tokens: {tokens}")
+                # st.caption(f"Model: {msg.get('model', 'user')} | Tokens: {tokens}") - show token used in each chat box
 
         # Token display in sidebar
         with st.sidebar:
-            # [Previous sidebar code remains the same until AI service selection]
 
-            # Move token display here, after the AI service selection but before the end of sidebar
             st.divider()
-            st.markdown("### Token Used")
+            st.markdown("""
+                    <style>
+                    /* Token display in sidebar (ensures wrapping and better layout) */
+                    .ai-service-box small {
+                        white-space: normal; /* Wrap text dynamically */
+                        word-wrap: break-word; /* Break long words if needed */
+                        overflow: hidden; /* Prevent overflow */
+                        text-overflow: ellipsis; /* Add "..." if content overflows */
+                        font-size: 10px !important; /* Adjust font size for compact look */
+                    }
+
+                    .ai-service-box h3 {
+                        font-size: 16px !important; /* Header size for services */
+                        text-align: center; /* Center-align service headers */
+                    }
+
+                    /* Optional: Add spacing and visual separation within columns */
+                    .st-column {
+                        padding-left: 5px;
+                        padding-right: 5px;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
 
             # First row: AI Services
             cols_services = st.columns(4)
             with cols_services[0]:
-                st.markdown("<small>Claude</small>", unsafe_allow_html=True)
-                st.markdown(f"<small>{claude_tokens if 'claude_tokens' in locals() else 0}</small>",
-                            unsafe_allow_html=True)
+                st.markdown("<div class='ai-service-box'><small>Claude</small></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='ai-service-box'><small>{claude_tokens if 'claude_tokens' in locals() else 0}</small></div>",
+                    unsafe_allow_html=True)
             with cols_services[1]:
-                st.markdown("<small>ChatGPT</small>", unsafe_allow_html=True)
-                st.markdown(f"<small>{gpt_tokens if 'gpt_tokens' in locals() else 0}</small>", unsafe_allow_html=True)
+                st.markdown("<div class='ai-service-box'><small>ChatGPT</small></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='ai-service-box'><small>{gpt_tokens if 'gpt_tokens' in locals() else 0}</small></div>",
+                    unsafe_allow_html=True)
             with cols_services[2]:
-                st.markdown("<small>DALL-E</small>", unsafe_allow_html=True)
-                st.markdown(f"<small>{dalle_tokens if 'dalle_tokens' in locals() else 0}</small>",
-                            unsafe_allow_html=True)
+                st.markdown("<div class='ai-service-box'><small>DALL-E</small></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='ai-service-box'><small>{dalle_tokens if 'dalle_tokens' in locals() else 0}</small></div>",
+                    unsafe_allow_html=True)
             with cols_services[3]:
-                st.markdown("<small>Gemini</small>", unsafe_allow_html=True)
-                st.markdown(f"<small>{gemini_tokens if 'gemini_tokens' in locals() else 0}</small>",
-                            unsafe_allow_html=True)
-
+                st.markdown("<div class='ai-service-box'><small>Gemini</small></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='ai-service-box'><small>{gemini_tokens if 'gemini_tokens' in locals() else 0}</small></div>",
+                    unsafe_allow_html=True)
             st.divider()
             # Second row: Input and Total with larger text
             cols_totals = st.columns(2)

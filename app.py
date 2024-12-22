@@ -1,7 +1,12 @@
 import base64
+import logging
+import requests
 import io
 import os
+from datetime import datetime
 from io import BytesIO
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Tuple
 
 import pyperclip
 import streamlit as st
@@ -9,624 +14,661 @@ from PIL import Image
 
 from chat_manager import ChatHistoryManager
 
-
-def handle_multiple_files(files, manager):
-    stored_files = []
-
-    for file in files:
-        try:
-            if file.type.startswith('image'):
-                image = Image.open(file)
-                buffered = io.BytesIO()
-                image.save(buffered, format=image.format)
-                image_data = base64.b64encode(buffered.getvalue()).decode()
-                stored_files.append({
-                    'name': file.name,
-                    'type': 'image',
-                    'content': image_data,
-                    'format': image.format,
-                    'language': 'image'
-                })
-            else:
-                content = file.read().decode('utf-8')
-                file_extension = file.name.split('.')[-1] if '.' in file.name else 'txt'
-                stored_files.append({
-                    'name': file.name,
-                    'type': 'text',
-                    'content': content,
-                    'language': file_extension
-                })
-
-        except Exception as e:
-            print(f"Error processing file {file.name}: {str(e)}")
-            continue
-
-    return stored_files
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='app_debug.log'
+)
+logger = logging.getLogger(__name__)
 
 
-def main():
-    st.set_page_config(page_title="RonnieRome Virtual Board Room - GameDev", layout="wide")
-    for key in ['show_title_input', 'selected_conv', 'messages', 'ai_service', 'analysis_results', 'show_code_popup', 'theme']:
-        if key not in st.session_state:
-            if key == 'show_title_input':
-                st.session_state[key] = True
-            elif key == 'selected_conv':
-                st.session_state[key] = None
-            elif key == 'analysis_results':
-                st.session_state[key] = []
-            elif key == 'show_code_popup':
-                st.session_state[key] = False
-            elif key == 'theme':
-                st.session_state[key] = "Pitch Black"
-            else:
-                st.session_state[key] = "Claude"
-
-    manager = ChatHistoryManager()
-    st.title("RonnieRome Virtual Board Room - GameDev")
-
-    st.markdown("""
-        <style>
-            .streamlit-expanderHeader {
-                width: 30% !important;
-            }
-            select {
-                width: 30% !important;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+class ThemeManager:
+    """Manages UI themes and styling"""
 
     THEMES = {
         "Sabbath Black": """
             <style>
-            @import url('https://fonts.googleapis.com/css2?family=Rock+Salt&display=swap');
-            @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap'); /* Clean reading font */
+                @import url('https://fonts.googleapis.com/css2?family=Rock+Salt&display=swap');
+                @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300&display=swap');
 
-            /* Apply globally */
-            * {
-                font-family: 'Rock Salt', cursive !important;
-            }
+                * {
+                    font-family: 'Roboto', sans-serif !important;
+                }
 
-            /* Sidebar specifically */
-            .css-1d391kg { 
-                font-size: 8px !important; /* Smaller sidebar text for better usability */
-            }
+                [data-testid="stSidebar"] {
+                    background-color: #000000 !important;
+                    color: #ffffff !important;
+                }
 
-            /* Main app readability */
-            .stApp, .block-container, .stMarkdown, .stChatMessage, .css-18e3th9 {
-                font-family: 'Roboto', sans-serif !important; /* Clean and readable font for chat/messages */
-                font-size: 16px !important; /* Comfortable font size for main chat content */
-            }
+                .stApp {
+                    background-color: #000000 !important;
+                    color: #ffffff !important;
+                }
 
-            /* Background and button styles */
-            .stApp, .block-container, .css-1d391kg {
-                background-color: #000000; /* Background for app and sidebar */
-                color: #ffffff; /* Standard text color */
-            }
+                .stButton>button {
+                    background-color: #333333;
+                    color: #ffffff;
+                    border: 1px solid #666666;
+                }
 
-            .stButton>button, .stTextInput>div>input, .stTextArea textarea {
-                background-color: #333333;
-                color: #ffffff;
-            }
+                .stTextInput>div>div>input {
+                    background-color: #333333;
+                    color: #ffffff;
+                }
+
+                .stSelectbox>div>div>select {
+                    background-color: #333333;
+                    color: #ffffff;
+                }
             </style>
-            """,
+        """,
         "Greenday": """
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Finger+Paint&display=swap');
             @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
 
-            /* Apply globally */
             * {
                 font-family: 'Finger Paint', cursive !important;
             }
 
-            /* Sidebar specifically */
-            .css-1d391kg {
-                font-size: 15px !important;
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background-color: #002b36 !important;
+                color: #b58900 !important;
             }
 
-            /* Main app readability */
-            .stApp, .block-container, .stMarkdown, .stChatMessage, .css-18e3th9 {
-                font-family: 'Roboto', sans-serif !important;
-                font-size: 16px !important;
-            }
-
-            .stApp, .block-container, .css-1d391kg {
-                background-color: #002b36; /* Sidebar included */
-                color: #b58900;
-            }
-
-            .stButton>button, .stTextInput>div>input, .stTextArea textarea {
-                background-color: #073642;
-                color: #b58900;
+            /* Main app background */
+            .stApp {
+                background: linear-gradient(to bottom, #003847, #004d5b 75%, #a6895b) !important; /* Adjusted gradient for smooth transition with brown */
+                color: #b58900 !important;
             }
             </style>
-            """,
+        """,
+
         "Pastel Elegance": """
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
             @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
 
-            /* Apply globally */
             * {
                 font-family: 'Dancing Script', cursive !important;
             }
 
-            /* Sidebar specifically */
-            .css-1d391kg {
-                font-size: 15px !important;
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background-color: #b30041 !important; /* Updated to red rose color */
+                color: #d4af37 !important;
             }
 
-            /* Main app readability */
-            .stApp, .block-container, .stMarkdown, .stChatMessage, .css-18e3th9 {
-                font-family: 'Roboto', sans-serif !important;
-                font-size: 16px !important;
-            }
-
-            .stApp, .block-container, .css-1d391kg {
-                background-color: #ffe5e5; /* Background for app and sidebar */
-                color: #d4af37; /* Gold text tone */
-            }
-
-            .stButton>button, .stTextInput>div>input, .stTextArea textarea {
-                background-color: #ffd7d7;
-                color: #d4af37;
+            /* Main app background */
+            .stApp {
+                background-color: #b50050 !important; /* Slightly different shade than its sidebar */
+                color: #d4af37 !important;
             }
             </style>
-            """,
+        """,
+
         "Futuristic Metal": """
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap');
             @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
 
-            /* Apply globally */
             * {
                 font-family: 'Orbitron', sans-serif !important;
             }
 
-            /* Sidebar specifically */
-            .css-1d391kg {
-                font-size: 15px !important;
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background: linear-gradient(45deg, #333333, #666666) !important;
+                color: #00ffff !important;
             }
 
-            /* Main app readability */
-            .stApp, .block-container, .stMarkdown, .stChatMessage, .css-18e3th9 {
-                font-family: 'Roboto', sans-serif !important;
-                font-size: 16px !important;
-            }
-
-            .stApp, .block-container, .css-1d391kg {
-                background: linear-gradient(45deg, #333333, #666666);
-                color: #00ffff;
-            }
-
-            .stButton>button, .stTextInput>div>input, .stTextArea textarea {
-                background-color: #555555;
-                color: #00ffff;
+            /* Main app background */
+            .stApp {
+                background: linear-gradient(45deg, #333333, #666666) !important; /* Match sidebar background */
+                color: #00ffff !important;
             }
             </style>
-            """,
-        "Transparent": """
+        """,
+
+        "Saturn": """
             <style>
+            @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
             @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
             @import url('https://fonts.googleapis.com/css2?family=Roboto&display=swap');
 
-            /* Apply globally */
             * {
                 font-family: 'Great Vibes', cursive !important;
             }
 
-            /* Sidebar specifically */
-            .css-1d391kg {
-                font-size: 15px !important;
+            /* Sidebar background */
+            [data-testid="stSidebar"] {
+                background: linear-gradient(to bottom, #baa8a0, #7e5e5c, #99ccee) !important; /* Smooth Saturn ring colors with subtle blue tint */
+                color: #d4af37 !important;
             }
 
-            /* Main app readability */
-            .stApp, .block-container, .stMarkdown, .stChatMessage, .css-18e3th9 {
-                font-family: 'Roboto', sans-serif !important;
-                font-size: 16px !important;
+            /* Main app background */
+            .stApp {
+                background: linear-gradient(to bottom, #452850, #4f3d68, #946648, #e0c8a3, #91c8de, #003366) !important; /* Adjusted gradient for darker and pastel tones */
+                background-size: 100% 80%; /* Reduced the size of the brown gradient */
+                color: #d4af37 !important;
+
+            /* Saturn ring blurred strip */
+            .stApp::before {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 0;
+                width: 100%;
+                height: 15px;
+                background: linear-gradient(to right, rgba(186, 168, 160, 0.5), rgba(126, 94, 92, 0.2), rgba(126, 94, 92, 0.5));
+                filter: blur(8px);
+                z-index: 0;
             }
 
-            .stApp, .css-1d391kg {
-                background: transparent;
-            }
-
-            .block-container {
-                backdrop-filter: blur(10px);
-                -webkit-backdrop-filter: blur(10px);
-            }
-
-            .stButton>button, .stTextInput>div>input, .stTextArea textarea {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                border: none;
-            }
             </style>
-            """
+        """
     }
 
-    BACKGROUND_DIR = "backgrounds"
+    @staticmethod
+    def apply_theme(theme_name: str):
+        """Apply selected theme to the application"""
+        if theme_name in ThemeManager.THEMES:
+            st.markdown(ThemeManager.THEMES[theme_name], unsafe_allow_html=True)
 
-    # Ensure the directory exists
-    if not os.path.exists(BACKGROUND_DIR):
-        os.makedirs(BACKGROUND_DIR)
 
-    background_images = [f for f in os.listdir(BACKGROUND_DIR) if f.endswith((".jpg", ".jpeg", ".png"))]
+class SessionState:
+    """Manages application session state"""
 
-    if not background_images:
-        st.warning("No background images found in the 'backgrounds' folder. Please add some images.")
-        background_images = ["None"]
+    @staticmethod
+    def initialize_state():
+        """Initialize all session state variables"""
+        initial_states = {
+            'show_title_input': True,
+            'selected_conv': None,
+            'messages': [],
+            'ai_service': "Claude",
+            'analysis_results': [],
+            'show_code_popup': False,
+            'theme': "Sabbath Black",
+            'conversation_started': False,
+            'current_model': None,
+            'image_size': "1024x1024",
+            'error_message': None,
+            'success_message': None,
+            'clipboard_image': None
+        }
 
-    # Function to encode the selected image to base64
-    def get_base64_image(image_path):
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
+        for key, value in initial_states.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
 
-    # Create two columns with equal width
-    col1, col2 = st.columns(2)
 
-    # Select Theme dropdown
-    with col1:
-        theme_choice = st.selectbox("Select Theme", list(THEMES.keys()), key="theme_choice")
+class FileHandler:
+    """Handles file operations"""
 
-    # Select Background Image dropdown
-    with col2:
-        selected_bg = st.selectbox("Select Background Image", ["None"] + background_images, key="bg_choice")
+    @staticmethod
+    def process_uploaded_files(files, manager: ChatHistoryManager) -> List[Dict[str, Any]]:
+        """Process uploaded files and return stored file data"""
+        stored_files = []
 
-    # Apply the selected theme
-    st.session_state.theme = theme_choice
-    current_theme = st.session_state.get("theme", "Sabbath Black")
-    st.markdown(THEMES[current_theme], unsafe_allow_html=True)
+        for file in files:
+            try:
+                if file.type.startswith('image'):
+                    stored_file = FileHandler._process_image_file(file)
+                else:
+                    stored_file = FileHandler._process_text_file(file)
 
-    # Apply the selected background using custom CSS
-    if selected_bg != "None":
-        bg_path = os.path.join(BACKGROUND_DIR, selected_bg)
-        bg_base64 = get_base64_image(bg_path)
-        st.markdown("""
-            <style>
-            /* Apply clean fonts to main chat */
-            .stChatMessage, .stChatMessage p {
-                font-family: 'Roboto', Arial, sans-serif !important;
-                letter-spacing: normal !important;
-            }
+                stored_files.append(stored_file)
+                logger.debug(f"Successfully processed file: {file.name}")
 
-            /* Keep stylized font only for buttons and headers */
-            .stButton button, h1, h2, h3 {
-                font-family: 'Rock Salt', cursive !important;
-            }
+            except Exception as e:
+                logger.error(f"Error processing file {file.name}: {str(e)}")
+                st.error(f"Failed to process file {file.name}: {str(e)}")
+                continue
 
-            /* Clean font for sidebar content */
-            .css-1d391kg {
-                font-family: 'Roboto', Arial, sans-serif !important;
-            }
+        return stored_files
 
-            /* Maintain button styling in sidebar */
-            .css-1d391kg button {
-                font-family: 'Rock Salt', cursive !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-    else:
-        # If "None" is selected, use a default background color
-        st.markdown(
-            """
-            <style>
-            body {
-                background-color: #1e1e1e;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
+    @staticmethod
+    def _process_image_file(file) -> Dict[str, Any]:
+        """Process an image file"""
+        image = Image.open(file)
+        buffered = io.BytesIO()
+        image.save(buffered, format=image.format)
 
-    st.markdown("<hr style='height: 1px; border: none; background-color: #ddd; margin-top: 0px; margin-bottom: 0px;'>",
-                unsafe_allow_html=True)
+        return {
+            'name': file.name,
+            'type': 'image',
+            'content': base64.b64encode(buffered.getvalue()).decode(),
+            'format': image.format,
+            'language': 'image'
+        }
 
-    with st.sidebar:
+    @staticmethod
+    def _process_text_file(file) -> Dict[str, Any]:
+        """Process a text file"""
+        content = file.read().decode('utf-8')
+        file_extension = file.name.split('.')[-1] if '.' in file.name else 'txt'
+
+        return {
+            'name': file.name,
+            'type': 'text',
+            'content': content,
+            'language': file_extension
+        }
+
+
+class ChatInterface:
+    """Manages chat interface and message handling"""
+
+    def __init__(self, manager: ChatHistoryManager):
+        self.manager = manager
+
+    def handle_user_input(self, user_input: str):
+        """Process user input and generate AI response"""
+        try:
+            # Add user message
+            self.manager.add_message(
+                st.session_state.selected_conv,
+                user_input,
+                "user",
+                ai_service=st.session_state.ai_service.lower()
+            )
+
+            # Generate AI response
+            if st.session_state.ai_service == "DALL-E":
+                image_data = self.manager.generate_image_dalle(
+                    user_input,
+                    st.session_state.image_size
+                )
+                if image_data:
+                    self.manager.add_message(
+                        st.session_state.selected_conv,
+                        "Generated image:",
+                        "assistant",
+                        ai_service="dalle",
+                        model=st.session_state.current_model,
+                        image_data=image_data
+                    )
+                    response = True
+            else:
+                service_methods = {
+                    "Claude": self.manager.send_to_claude,
+                    "ChatGPT": self.manager.send_to_chatgpt,
+                    "Gemini": self.manager.send_to_gemini
+                }
+
+                method = service_methods.get(st.session_state.ai_service)
+                if not method:
+                    raise ValueError(f"Unknown AI service: {st.session_state.ai_service}")
+
+                response = method(
+                    st.session_state.selected_conv,
+                    user_input,
+                    model=st.session_state.current_model
+                )
+
+            if response:
+                logger.debug(f"Got response from {st.session_state.ai_service}")
+                st.rerun()
+
+        except Exception as e:
+            error_msg = f"Error processing message: {str(e)}"
+            logger.error(error_msg)
+            st.error(error_msg)
+
+    def display_messages(self, conversation: Dict[str, Any]):
+        """Display chat messages"""
+        for msg in conversation.get('messages', []):
+            with st.chat_message(msg['sender']):
+                if msg.get('image_data'):
+                    st.image(
+                        base64.b64decode(msg['image_data']),
+                        use_container_width=True
+                    )
+                st.write(msg['content'])
+
+                if msg.get('error'):
+                    st.error(msg['error'])
+
+
+class SidebarManager:
+    """Manages sidebar configuration and controls"""
+
+    def __init__(self, manager: ChatHistoryManager):
+        self.manager = manager
+
+    def configure_sidebar(self):
+        """Set up sidebar controls and options"""
+        with st.sidebar:
+            self._add_control_buttons()
+            self._handle_file_upload()
+            self._configure_chat_settings()
+            self._setup_ai_service()
+
+    def _add_control_buttons(self):
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("🔄 Reset Info"):
                 st.session_state.clear()
-                st.session_state.show_title_input = True
-                st.session_state.ai_service = "Claude"
+                SessionState.initialize_state()
                 st.rerun()
         with col2:
             if st.button("📜 Show Code"):
                 st.session_state.show_code_popup = not st.session_state.show_code_popup
 
-        uploaded_files = st.file_uploader("Import Files",
-                                          type=["json", "cs", "txt", "py", "js", "png", "jpg", "jpeg"],
-                                          accept_multiple_files=True)
+    def _handle_file_upload(self):
+        uploaded_files = st.file_uploader(
+            "Import Files",
+            type=["json", "cs", "txt", "py", "js", "png", "jpg", "jpeg"],
+            accept_multiple_files=True
+        )
+
         col1, col2 = st.columns([1, 1])
         with col1:
-            submit_button = st.button("📤 Submit Files")
-        with col2:
-            paste_button = st.button("📎 Paste Scr")
-
-        if paste_button:
-            try:
-                clipboard_data = pyperclip.paste()
-                if clipboard_data.startswith('data:image'):
-                    img_data = clipboard_data.split(',')[1]
-                    img_bytes = BytesIO(base64.b64decode(img_data))
-                    st.image(img_bytes, use_container_width=True)
-                    st.session_state.clipboard_image = img_data
-                elif clipboard_data.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    with open(clipboard_data, 'rb') as file:
-                        img_bytes = file.read()
-                    st.image(img_bytes, use_container_width=True)
-                    st.session_state.clipboard_image = base64.b64encode(img_bytes).decode()
-                    if st.session_state.selected_conv:
-                        manager.add_message(st.session_state.selected_conv, "[Clipboard image pasted]", "user")
-            except Exception as e:
-                st.error(f"Clipboard error: {e}")
-
-        if st.session_state.show_title_input:
-            col1, col2 = st.columns([3, 2])
-            with col1:
-                title = st.text_input("Chat Title")
-            with col2:
-                st.markdown("""
-                    <style>
-                    .button-shrink > button {
-                        white-space: pre-wrap; /* Allow wrapping */
-                        word-wrap: break-word; /* Break words when needed */
-                        font-size: 1px !important; /* Adjust font size */
-                        line-height: 1.2; /* Add spacing between lines */
-                        text-align: center; /* Center align text */
-                        padding: 8px 10px; /* Add padding for better UI */
-                        height: auto; /* Resize height dynamically */
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-                if st.button("➕ Start\nNew\nChat",
-                key="start_new_chat", use_container_width=True):
-                    if title:
-                        st.session_state.selected_conv = manager.create_conversation(title)
-                        st.session_state.show_title_input = False
-                        st.rerun()
-
-        conversations = manager.list_conversations()
-        if conversations:
-            st.session_state.selected_conv = st.selectbox(
-                "Select Chat",
-                conversations,
-                index=conversations.index(
-                    st.session_state.selected_conv) if st.session_state.selected_conv in conversations else 0
-            )
-
-            if st.session_state.selected_conv:
-                st.session_state.ai_service = st.radio("AI Service", ["Claude", "ChatGPT", "DALL-E", "Gemini"])
-
-                if st.session_state.ai_service == "Claude":
-                    model = st.selectbox("Model", list(manager.CLAUDE_MODELS.values()))
-                    model_key = [k for k, v in manager.CLAUDE_MODELS.items() if v == model][0]
-                elif st.session_state.ai_service == "ChatGPT":
-                    model = st.selectbox("Model", list(manager.GPT_MODELS.values()))
-                    model_key = [k for k, v in manager.GPT_MODELS.items() if v == model][0]
-                elif st.session_state.ai_service == "DALL-E":
-                    model = st.selectbox("Model", list(manager.DALLE_MODELS.values()))
-                    model_key = [k for k, v in manager.DALLE_MODELS.items() if v == model][0]
-                    size = st.selectbox("Image Size", ["1024x1024", "512x512"])
-                else:
-                    model = st.selectbox("Model", list(manager.GEMINI_MODELS.values()))
-                    model_key = [k for k, v in manager.GEMINI_MODELS.items() if v == model][0]
-
-    # Main content area
-    if st.session_state.selected_conv:
-        conversation = manager.get_conversation(st.session_state.selected_conv)
-        st.caption(f"Current Chat: {conversation['title']}")
-
-        # Export buttons
-        export_col1, export_col2, export_col3, export_col4 = st.columns(4)
-        with export_col1:
-            if st.button("Export JSON"):
-                content = manager.export_conversation(st.session_state.selected_conv, "json")
-                if content:
-                    st.download_button("Download JSON", content, f"{st.session_state.selected_conv}.json")
-        with export_col2:
-            if st.button("Export Chat"):
-                content = manager.export_conversation(st.session_state.selected_conv, "txt")
-                if content:
-                    st.download_button("Download Chat", content, f"{st.session_state.selected_conv}.txt")
-        with export_col3:
-            if st.button("Export Code"):
-                code_msgs = manager.extract_code_messages(st.session_state.selected_conv)
-                if code_msgs:
-                    options = [f"Message {i}: {msg['content'][:50]}..." for i, msg in code_msgs]
-                    selected = st.multiselect("Select code to export:", options)
-                    if selected and st.button("Export Selected"):
-                        indices = [code_msgs[i][0] for i in range(len(code_msgs)) if options[i] in selected]
-                        exported = manager.export_selected_code(st.session_state.selected_conv, indices)
-                        st.success(f"Exported {len(exported)} code snippets")
-        with export_col4:
-            if st.button("Export Images"):
-                conversation = manager.get_conversation(st.session_state.selected_conv)
-                image_messages = [msg for msg in conversation['messages'] if msg.get('image_data')]
-                if image_messages:
-                    for i, msg in enumerate(image_messages):
-                        filename = f"image_{i}.png"
-                        if msg.get('image_data'):
-                            st.download_button(
-                                f"Download {filename}",
-                                base64.b64decode(msg['image_data']),
-                                filename,
-                                mime="image/png",
-                                key=f"download_img_{i}"
-                            )
-
-        if uploaded_files and submit_button:
-            try:
-                stored_files = handle_multiple_files(uploaded_files, manager)
-                if st.session_state.selected_conv:
-                    analysis_results = []
-                    for file in stored_files:
-                        if file['type'] == 'image':
-                            analysis = f"Image file uploaded: {file['name']} (Format: {file['format']})"
-                            analysis_results.append({
-                                'name': file['name'],
-                                'language': 'image',
-                                'analysis': analysis
-                            })
-                        else:
-                            analysis = manager.analyze_code(file['content'], file['language'])
-                            analysis_results.append({
-                                'name': file['name'],
-                                'language': file['language'],
-                                'analysis': analysis
-                            })
-
-                        metadata_message = f"File uploaded: {file['name']} ({file['type']})"
-                        manager.add_message(st.session_state.selected_conv, metadata_message, "user")
-
-                        if file['type'] == 'text':
-                            manager.log_file_analysis(file['name'], file['language'], analysis)
-
-                    st.session_state.analysis_results = analysis_results
-                    st.success("Files successfully uploaded.")
-
-                    for file in stored_files:
-                        if file['type'] == 'image':
-                            st.image(base64.b64decode(file['content']),
-                                     caption=file['name'],
-                                     use_container_width=True)
-
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-        if st.session_state.analysis_results:
-            with st.expander("View Analysis Results"):
-                for result in st.session_state.analysis_results:
-                    st.markdown(f"**Analysis for {result['name']} ({result['language']}):**\n{result['analysis']}")
-
-        # Token counting
-        total_tokens = claude_tokens = gpt_tokens = dalle_tokens = gemini_tokens = input_tokens = 0
-
-        # Display messages and count tokens
-        for msg in conversation['messages']:
-            with st.chat_message(msg['sender']):
-                if msg.get('image_data'):
-                    st.image(base64.b64decode(msg['image_data']), use_container_width=True)
-                st.write(msg['content'])
-
-                tokens = msg.get('tokens', 0)
-                total_tokens += tokens
-
-                # Count tokens based on message type
-                if msg['sender'] == 'user':
-                    input_tokens += tokens
-
-                # Count AI service tokens
-                if msg.get('ai_service') == 'claude':
-                    claude_tokens += tokens
-                elif msg.get('ai_service') == 'chatgpt':
-                    gpt_tokens += tokens
-                elif msg.get('ai_service') == 'dalle':
-                    dalle_tokens += tokens
-                elif msg.get('ai_service') == 'gemini':
-                    gemini_tokens += tokens
-
-                st.caption(f"Model: {msg.get('model', 'user')} | Tokens: {tokens}")
-
-        # Token display in sidebar
-        with st.sidebar:
-
-            st.divider()
-            st.markdown("""
-                    <style>
-                    /* Token display in sidebar (ensures wrapping and better layout) */
-                    .ai-service-box small {
-                        white-space: normal; /* Wrap text dynamically */
-                        word-wrap: break-word; /* Break long words if needed */
-                        overflow: hidden; /* Prevent overflow */
-                        text-overflow: ellipsis; /* Add "..." if content overflows */
-                        font-size: 10px !important; /* Adjust font size for compact look */
-                    }
-
-                    .ai-service-box h3 {
-                        font-size: 16px !important; /* Header size for services */
-                        text-align: center; /* Center-align service headers */
-                    }
-
-                    /* Optional: Add spacing and visual separation within columns */
-                    .st-column {
-                        padding-left: 5px;
-                        padding-right: 5px;
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-
-            # First row: AI Services
-            cols_services = st.columns(4)
-            with cols_services[0]:
-                st.markdown("<div class='ai-service-box'><small>Claude</small></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"<div class='ai-service-box'><small>{claude_tokens if 'claude_tokens' in locals() else 0}</small></div>",
-                    unsafe_allow_html=True)
-            with cols_services[1]:
-                st.markdown("<div class='ai-service-box'><small>ChatGPT</small></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"<div class='ai-service-box'><small>{gpt_tokens if 'gpt_tokens' in locals() else 0}</small></div>",
-                    unsafe_allow_html=True)
-            with cols_services[2]:
-                st.markdown("<div class='ai-service-box'><small>DALL-E</small></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"<div class='ai-service-box'><small>{dalle_tokens if 'dalle_tokens' in locals() else 0}</small></div>",
-                    unsafe_allow_html=True)
-            with cols_services[3]:
-                st.markdown("<div class='ai-service-box'><small>Gemini</small></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"<div class='ai-service-box'><small>{gemini_tokens if 'gemini_tokens' in locals() else 0}</small></div>",
-                    unsafe_allow_html=True)
-            st.divider()
-            # Second row: Input and Total with larger text
-            cols_totals = st.columns(2)
-            with cols_totals[0]:
-                st.markdown("**Input**")
-                st.markdown(f"### {input_tokens if 'input_tokens' in locals() else 0}")
-            with cols_totals[1]:
-                st.markdown("**Total**")
-                st.markdown(f"### {total_tokens if 'total_tokens' in locals() else 0}")
-
-        # Chat input and message handling
-        prompt = st.chat_input("Message")
-        if prompt:
-            if st.session_state.ai_service == "DALL-E":
-                image_data = manager.generate_image_dalle(
-                    st.session_state.selected_conv,
-                    prompt,
-                    model=model_key,
-                    size=size
+            if st.button("📤 Submit Files") and uploaded_files:
+                stored_files = FileHandler.process_uploaded_files(
+                    uploaded_files,
+                    self.manager
                 )
-                if image_data:
+                if stored_files:
+                    st.success(f"Successfully processed {len(stored_files)} files")
+
+        with col2:
+            if st.button("📎 Paste Scr"):
+                self._handle_clipboard_paste()
+
+    def _handle_clipboard_paste(self):
+        try:
+            clipboard_data = pyperclip.paste()
+            if clipboard_data.startswith('data:image'):
+                img_data = clipboard_data.split(',')[1]
+                img_bytes = BytesIO(base64.b64decode(img_data))
+                st.image(img_bytes, use_container_width=True)
+                st.session_state.clipboard_image = img_data
+            elif clipboard_data.lower().endswith(('.png', '.jpg', '.jpeg')):
+                with open(clipboard_data, 'rb') as file:
+                    img_bytes = file.read()
+                st.image(img_bytes, use_container_width=True)
+                st.session_state.clipboard_image = base64.b64encode(img_bytes).decode()
+        except Exception as e:
+            logger.error(f"Clipboard error: {str(e)}")
+            st.error(f"Error processing clipboard content: {str(e)}")
+
+    def _configure_chat_settings(self):
+        if st.session_state.show_title_input:
+            self._show_chat_creation()
+
+        conversations = self.manager.list_conversations()
+        if conversations:
+            self._show_conversation_selector(conversations)
+
+    def _show_chat_creation(self):
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            title = st.text_input("Chat Title")
+        with col2:
+            if st.button("➕ Start New Chat", key="start_new_chat"):
+                if title:
+                    st.session_state.selected_conv = self.manager.create_conversation(title)
+                    st.session_state.show_title_input = False
                     st.rerun()
-            elif st.session_state.ai_service == "Claude":
-                response = manager.send_to_claude(st.session_state.selected_conv, prompt, model_key)
-            elif st.session_state.ai_service == "ChatGPT":
-                response = manager.send_to_chatgpt(st.session_state.selected_conv, prompt, model_key)
-            else:
-                response = manager.send_to_gemini(st.session_state.selected_conv, prompt, model_key)
-            if response:
-                st.rerun()
+                else:
+                    st.error("Please enter a chat title")
 
-    if st.session_state.show_code_popup:
+    def _show_conversation_selector(self, conversations: List[str]):
+        st.session_state.selected_conv = st.selectbox(
+            "Select Chat",
+            conversations,
+            index=conversations.index(st.session_state.selected_conv)
+            if st.session_state.selected_conv in conversations else 0
+        )
+
+    def _setup_ai_service(self):
+        if not st.session_state.selected_conv:
+            return
+
+        st.session_state.ai_service = st.radio(
+            "AI Service",
+            ["Claude", "ChatGPT", "DALL-E", "Gemini"]
+        )
+
+        model_configs = {
+            "Claude": self.manager.CLAUDE_MODELS,
+            "ChatGPT": self.manager.GPT_MODELS,
+            "DALL-E": self.manager.DALLE_MODELS,
+            "Gemini": self.manager.GEMINI_MODELS
+        }
+
+        current_config = model_configs.get(st.session_state.ai_service)
+        if current_config:
+            model = st.selectbox("Model", list(current_config.values()))
+            st.session_state.current_model = [
+                k for k, v in current_config.items() if v == model
+            ][0]
+
+            if st.session_state.ai_service == "DALL-E":
+                st.session_state.image_size = st.selectbox(
+                    "Image Size",
+                    ["1024x1024", "512x512"]
+                )
+
+
+def handle_exports(manager: ChatHistoryManager, conversation: Dict[str, Any]):
+    """Handle various export operations"""
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        if st.button("Export JSON"):
+            content = manager.export_conversation(
+                st.session_state.selected_conv,
+                "json"
+            )
+            if content:
+                st.download_button(
+                    "Download JSON",
+                    content,
+                    f"{st.session_state.selected_conv}.json"
+                )
+
+    with col2:
+        if st.button("Export Chat"):
+            content = manager.export_conversation(
+                st.session_state.selected_conv,
+                "txt"
+            )
+            if content:
+                st.download_button(
+                    "Download Chat",
+                    content,
+                    f"{st.session_state.selected_conv}.txt"
+                )
+
+    with col3:
+        if st.button("Export Code"):
+            code_msgs = manager.extract_code_messages(
+                st.session_state.selected_conv
+            )
+            if code_msgs:
+                handle_code_export(manager, code_msgs)
+
+    with col4:
+        if st.button("Export Images"):
+            handle_image_export(conversation)
+
+
+def handle_image_export(conversation: Dict[str, Any]):
+    """Handle the export of images from the conversation"""
+    image_messages = [msg for msg in conversation['messages']
+                      if msg.get('image_data')]
+
+    if not image_messages:
+        st.warning("No images found in this conversation")
+        return
+
+    for i, msg in enumerate(image_messages):
+        try:
+            filename = f"image_{i}.png"
+            st.download_button(
+                label=f"Download {filename}",
+                data=base64.b64decode(msg['image_data']),
+                file_name=filename,
+                mime="image/png",
+                key=f"download_img_{i}"
+            )
+        except Exception as e:
+            logger.error(f"Error exporting image {i}: {str(e)}")
+            st.error(f"Failed to export image {i}")
+
+
+def handle_code_export(manager: ChatHistoryManager, code_msgs: List[Tuple[int, Dict]]):
+    """Handle the export of code snippets from the conversation"""
+    try:
+        options = [f"Message {i}: {msg['content'][:50]}..."
+                   for i, msg in enumerate(code_msgs)]
+    except Exception as e:
+        logger.error(f"Error in code export: {str(e)}")
+        st.error("Failed to export code snippets")
+
+    selected = st.multiselect("Select code snippets to export:", options)
+
+    if selected and st.button("Export Selected Code"):
+        indices = [code_msgs[i][0] for i in range(len(code_msgs))
+                   if options[i] in selected]
+
+        exported = manager.export_selected_code(
+            st.session_state.selected_conv,
+            indices
+        )
+
+        if exported:
+            st.success(f"Successfully exported {len(exported)} code snippets")
+
+            # Provide download links for exported files
+            for file_path in exported:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    st.download_button(
+                        label=f"Download {file_path.name}",
+                        data=content,
+                        file_name=file_path.name,
+                        mime="text/plain",
+                        key=f"download_code_{file_path.name}"
+                    )
+        else:
+            st.warning("No code files were exported")
+
+
+def display_code_viewer():
+    """Display the code viewer interface"""
+    try:
         with st.expander("Code Viewer"):
-            code_content = open(__file__, 'r').read()
-            st.markdown(f"**File Name:** {__file__}")
-            st.text_area("Code", code_content, height=400)
+            # Display app.py
+            st.subheader("Application Code (app.py)")
+            with open(__file__, 'r', encoding='utf-8') as f:
+                app_content = f.read()
+            st.text_area("App Code", app_content, height=400)
 
+            # Display chat_manager.py
+            st.subheader("Chat Manager Code (chat_manager.py)")
+            chat_manager_path = Path(__file__).parent / "chat_manager.py"
+            if chat_manager_path.exists():
+                with open(chat_manager_path, 'r', encoding='utf-8') as f:
+                    manager_content = f.read()
+                st.text_area("Chat Manager Code", manager_content, height=400)
+            else:
+                st.warning("chat_manager.py not found")
+
+    except Exception as e:
+        logger.error(f"Error displaying code viewer: {str(e)}")
+        st.error("Failed to display code viewer")
+
+def display_statistics(manager: ChatHistoryManager):
+    """Display conversation statistics"""
+    try:
+        stats = manager.get_conversation_statistics(st.session_state.selected_conv)
+
+        if not stats:
+            return
+
+        with st.expander("Conversation Statistics"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric("Total Messages", stats['total_messages'])
+                st.metric("User Messages", stats['user_messages'])
+                st.metric("AI Messages", stats['ai_messages'])
+                st.metric("Files Shared", stats['files_shared'])
+
+            with col2:
+                st.metric("Total Tokens", stats['total_tokens'])
+                service_usage = stats['service_usage']
+                for service, count in service_usage.items():
+                    if count > 0:
+                        st.metric(f"{service.capitalize()} Usage", count)
+
+            if stats.get('conversation_duration'):
+                st.info(f"Conversation Duration: {stats['conversation_duration']}")
+            if stats.get('last_activity'):
+                st.info(f"Last Activity: {stats['last_activity']}")
+
+    except Exception as e:
+        logger.error(f"Error displaying statistics: {str(e)}")
+
+def main():
+    """Main application entry point"""
+    try:
+        # Initialize session state and components
+        SessionState.initialize_state()
+        manager = ChatHistoryManager()
+        chat_interface = ChatInterface(manager)
+        sidebar_manager = SidebarManager(manager)
+
+        # Configure page
+        st.set_page_config(
+            page_title="RonnieRome Virtual Board Room - GameDev",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+
+        st.title("RonnieRome Virtual Board Room - GameDev")
+
+        # Apply selected theme
+        theme_choice = st.selectbox(
+            "Select Theme",
+            list(ThemeManager.THEMES.keys()),
+            key="theme_choice"
+        )
+        ThemeManager.apply_theme(theme_choice)
+
+        # Configure sidebar
+        sidebar_manager.configure_sidebar()
+
+        # Main chat area
+        if st.session_state.selected_conv:
+            conversation = manager.get_conversation(st.session_state.selected_conv)
+            if conversation:
+                # Display conversation title and export options
+                st.caption(f"Current Chat: {conversation['title']}")
+                handle_exports(manager, conversation)
+
+                # Display messages
+                chat_interface.display_messages(conversation)
+
+                # Handle new user input
+                user_input = st.chat_input("Message")
+                if user_input:
+                    chat_interface.handle_user_input(user_input)
+
+                # Display code viewer if enabled
+                if st.session_state.show_code_popup:
+                    display_code_viewer()
+                display_statistics(manager)
+
+    except Exception as e:
+        logger.error(f"Application error: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
-
-
-def display_code_popup():
-    code_content = open(__file__, 'r').read()
-    html_content = f"""
-    <div id="popup-container" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-    background-color: rgba(0, 0, 0, 0.5); z-index: 9999; display: flex; justify-content: center; align-items: center;">
-        <div style="background-color: white; padding: 20px; border-radius: 10px; width: 80%; max-height: 80%; 
-        overflow: auto; position: relative;">
-            <button id="close-btn" style="position: absolute; top: 10px; right: 10px; background-color: red; color: 
-            white; border: none; border-radius: 5px; cursor: pointer;">Close</button>
-            <button id="copy-btn" style="position: absolute; top: 10px; left: 10px; background-color: blue; color: 
-            white; border: none; border-radius: 5px; cursor: pointer;">Copy</button>"""
