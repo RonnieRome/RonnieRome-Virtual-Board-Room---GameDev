@@ -342,11 +342,26 @@ class ChatHistoryManager:
         "claude-3-haiku-20240307": "Haiku"
     }
     CLAUDE_STYLES = {
-        "Normal": "Write in a natural, conversational style",
-        "Concise": "Write brief, focused responses that get straight to the point",
-        "Professional": "Write in a formal, business-appropriate style",
-        "Expert": "Write with technical depth and precision",
-        "Craftsman": "Write with emphasis on practical, hands-on expertise",
+        "Business": {
+            "name": "Business",
+            "instruction": "Communicate in a clear, polished way appropriate for business settings. Structure answers carefully with logical flow. Use formal but clear tone, avoiding casual language."
+        },
+        "Technical": {
+            "name": "Technical",
+            "instruction": "Provide detailed technical explanations with precise terminology. Focus on accuracy and thoroughness while maintaining clarity."
+        },
+        "Executive": {
+            "name": "Executive",
+            "instruction": "Present information concisely with focus on key insights and strategic implications. Prioritize actionable conclusions."
+        },
+        "Analytical": {
+            "name": "Analytical",
+            "instruction": "Break down complex topics systematically. Present evidence-based analysis with clear reasoning and structured arguments."
+        },
+        "Instructional": {
+            "name": "Instructional",
+            "instruction": "Explain concepts clearly with well-organized examples. Focus on building understanding through structured learning progression."
+        }
     }
 
     GPT_MODELS = {
@@ -414,11 +429,9 @@ class ChatHistoryManager:
                     )
 
                     response_content = response.content[0].text
-                    # Continue from previous Claude implementation
-                    tokens_in = self.token_counter.estimate_tokens(full_prompt)
                     tokens_out = self.token_counter.estimate_tokens(response_content)
 
-                    self.add_message(conv_id, prompt, "user", "claude", model, tokens_in)
+                    # Only add the assistant's response message, not the user's message
                     self.add_message(conv_id, response_content, "assistant", "claude", model, tokens_out)
 
                     return response_content
@@ -469,11 +482,8 @@ class ChatHistoryManager:
                     )
 
                     response_content = response.choices[0].message.content
-
-                    tokens_in = self.token_counter.estimate_tokens(prompt)
                     tokens_out = self.token_counter.estimate_tokens(response_content)
 
-                    self.add_message(conv_id, prompt, "user", "chatgpt", model, tokens_in)
                     self.add_message(conv_id, response_content, "assistant", "chatgpt", model, tokens_out)
 
                     return response_content
@@ -543,13 +553,12 @@ class ChatHistoryManager:
                     if not response.text:
                         raise Exception("Empty response received from Gemini")
 
-                    tokens_in = self.token_counter.estimate_tokens(full_prompt)
-                    tokens_out = self.token_counter.estimate_tokens(response.text)
+                    response_content = response.choices[0].message.content
+                    tokens_out = self.token_counter.estimate_tokens(response_content)
 
-                    self.add_message(conv_id, prompt, "user", "gemini", model, tokens_in)
-                    self.add_message(conv_id, response.text, "assistant", "gemini", model, tokens_out)
+                    self.add_message(conv_id, response_content, "assistant", "gemini", model, tokens_out)
 
-                    return response.text
+                    return response_content
 
                 except Exception as e:
                     if "safety" in str(e).lower() or "dangerous_content" in str(e).lower():

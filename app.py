@@ -269,20 +269,19 @@ class ChatInterface:
         """Process user input and generate AI response"""
         try:
             # Add user message
-            self.manager.add_message(
-                st.session_state.selected_conv,
-                user_input,
-                "user",
-                ai_service=st.session_state.ai_service.lower()
-            )
-
-            # Generate AI response
             if st.session_state.ai_service == "DALL-E":
                 image_data = self.manager.generate_image_dalle(
                     user_input,
                     st.session_state.image_size
                 )
                 if image_data:
+                    # Add both messages only after successful response
+                    self.manager.add_message(
+                        st.session_state.selected_conv,
+                        user_input,
+                        "user",
+                        ai_service="dalle"
+                    )
                     self.manager.add_message(
                         st.session_state.selected_conv,
                         "Generated image:",
@@ -303,6 +302,15 @@ class ChatInterface:
                 if not method:
                     raise ValueError(f"Unknown AI service: {st.session_state.ai_service}")
 
+                # Add user message first
+                self.manager.add_message(
+                    st.session_state.selected_conv,
+                    user_input,
+                    "user",
+                    ai_service=st.session_state.ai_service.lower()
+                )
+
+                # Get AI response
                 response = method(
                     st.session_state.selected_conv,
                     user_input,
@@ -435,12 +443,26 @@ class SidebarManager:
         )
         if st.session_state.ai_service == "Claude":
             if 'claude_style' not in st.session_state:
-                st.session_state.claude_style = "Normal"
-            st.session_state.claude_style = st.selectbox(
-                "Claude Style",
-                list(ChatHistoryManager.CLAUDE_STYLES.keys()),
-                index=list(ChatHistoryManager.CLAUDE_STYLES.keys()).index(st.session_state.claude_style)
+                st.session_state.claude_style = "Business"
+
+            styles = ChatHistoryManager.CLAUDE_STYLES
+            style_names = list(styles.keys())
+
+            selected_style = st.selectbox(
+                "Communication Style",
+                style_names,
+                index=style_names.index(st.session_state.claude_style)
             )
+
+            st.session_state.claude_style = selected_style
+
+            # Show style description
+            if selected_style in styles:
+                selected_style_info = styles.get(selected_style, {})
+                if isinstance(selected_style_info, dict) and 'instruction' in selected_style_info:
+                    st.caption(f"✍️ {selected_style_info['instruction']}")
+                else:
+                    st.caption("✍️ Standard conversational style")
 
         model_configs = {
             "Claude": self.manager.CLAUDE_MODELS,
