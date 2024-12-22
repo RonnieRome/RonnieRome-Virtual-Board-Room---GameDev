@@ -341,6 +341,13 @@ class ChatHistoryManager:
         "claude-3-opus-20240229": "Opus",
         "claude-3-haiku-20240307": "Haiku"
     }
+    CLAUDE_STYLES = {
+        "Normal": "Write in a natural, conversational style",
+        "Concise": "Write brief, focused responses that get straight to the point",
+        "Professional": "Write in a formal, business-appropriate style",
+        "Expert": "Write with technical depth and precision",
+        "Craftsman": "Write with emphasis on practical, hands-on expertise",
+    }
 
     GPT_MODELS = {
         "gpt-4": "GPT-4",

@@ -433,6 +433,14 @@ class SidebarManager:
             "AI Service",
             ["Claude", "ChatGPT", "DALL-E", "Gemini"]
         )
+        if st.session_state.ai_service == "Claude":
+            if 'claude_style' not in st.session_state:
+                st.session_state.claude_style = "Normal"
+            st.session_state.claude_style = st.selectbox(
+                "Claude Style",
+                list(ChatHistoryManager.CLAUDE_STYLES.keys()),
+                index=list(ChatHistoryManager.CLAUDE_STYLES.keys()).index(st.session_state.claude_style)
+            )
 
         model_configs = {
             "Claude": self.manager.CLAUDE_MODELS,
