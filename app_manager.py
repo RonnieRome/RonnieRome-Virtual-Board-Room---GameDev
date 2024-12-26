@@ -15,43 +15,26 @@ logger = logging.getLogger(__name__)
 class AppManager:
     def __init__(self):
         """Initialize the application and its core components."""
-        logger.debug("Starting AppManager initialization")
-
         try:
-            # Initialize core configuration
-            logger.debug("Initializing AppConfig")
+            # Core components
             self.config = AppConfig()
-
-            # Initialize the service manager
-            logger.debug("Initializing ServiceManager")
             self.service_manager = ServiceManager()
 
-            # Verify service manager initialization
-            if not self.service_manager:
-                raise RuntimeError("ServiceManager failed to initialize")
-
-            # Verify chat manager initialization through service manager
             if not hasattr(self.service_manager, 'chat_manager'):
-                raise RuntimeError("ChatManager not properly initialized in ServiceManager")
-
-            logger.debug("ServiceManager and ChatManager initialized successfully")
+                raise RuntimeError("ChatManager not properly initialized")
 
             # Initialize managers
-            logger.debug("Initializing application managers")
             self.state_manager = StateManager()
             self.theme_manager = ThemeManager()
             self.error_handler = ErrorHandler(self.service_manager.logging)
             self.export_manager = ExportManager(self.service_manager)
 
-            # Initialize UI components with service_manager
-            logger.debug("Initializing UI components")
-            self.sidebar = Sidebar(self.service_manager)
+            # Initialize UI components
+            self.sidebar = Sidebar(self.service_manager, self.state_manager)
             self.chat_area = ChatArea(self.service_manager)
 
-            logger.debug("AppManager initialization completed successfully")
-
         except Exception as e:
-            logger.error(f"Error during AppManager initialization: {str(e)}", exc_info=True)
+            logger.error(f"Initialization error: {str(e)}", exc_info=True)
             raise
 
     def initialize_app(self) -> None:
