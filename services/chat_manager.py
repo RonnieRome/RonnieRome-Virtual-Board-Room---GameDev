@@ -7,6 +7,7 @@ import google.generativeai as genai
 import uuid
 import requests
 import logging
+import mimetypes
 import streamlit as st
 
 from datetime import datetime
@@ -14,12 +15,26 @@ from pathlib import Path
 from typing import Dict, Optional, List, Any
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from dataclasses import dataclass
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
 
+logger = logging.getLogger(__name__)
+
+@dataclass
+class FileProcessResult:
+    """Data class to track file processing results."""
+    success: bool
+    file_name: str
+    file_type: str
+    content: Optional[str] = None
+    error: Optional[str] = None
 
 class ChatHistoryManager:
     def __init__(self):
+        self.conversations: Dict = {}
+        logger.debug("ChatHistoryManager initialized")
+
         self.config = AppConfig()
         self.image_handler = ImageHandler(storage_type="local")
         self.style_manager = AIStyleManager()
@@ -36,6 +51,48 @@ class ChatHistoryManager:
 
         # Initialize token counter with style consideration
         self.gpt_encoder = tiktoken.encoding_for_model("gpt-4")
+
+    def add_file_to_conversation(self, conv_id: str, file_data: Dict) -> None:
+        """Add processed file data to a conversation."""
+        if conv_id not in self.conversations:
+            self.conversations[conv_id] = {
+                'messages': [],
+                'files': [],
+                'created_at': datetime.now().isoformat()
+            }
+
+        # Add file to conversation
+        self.conversations[conv_id]['files'].append(file_data)
+
+        # Add a system message about the file
+        file_message = self._create_file_message(file_data)
+        self.conversations[conv_id]['messages'].append(file_message)
+
+        logger.debug(f"Added file {file_data['name']} to conversation {conv_id}")
+
+    def _create_file_message(self, file_data: Dict) -> Dict:
+        """Create a system message for a file upload."""
+        if file_data['type'] == 'image':
+            content = f"An image file '{file_data['name']}' has been uploaded."
+        else:
+            content = (f"File uploaded: {file_data['name']}\n\n"
+                       f"Content:\n{file_data['content']}")
+
+        return {
+            'role': 'system',
+            'content': content,
+            'timestamp': datetime.now().isoformat(),
+            'type': 'file_upload'
+        }
+
+    def get_conversation(self, conv_id: str) -> Optional[Dict]:
+        """Get a conversation by its ID."""
+        return self.conversations.get(conv_id)
+
+    def get_conversation_files(self, conv_id: str) -> List[Dict]:
+        """Get all files in a conversation."""
+        conversation = self.conversations.get(conv_id, {})
+        return conversation.get('files', [])
 
     def _initialize_api_clients(self):
         """Initialize API clients with proper error handling."""

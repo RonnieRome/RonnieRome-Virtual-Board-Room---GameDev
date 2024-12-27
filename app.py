@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 from app_manager import AppManager
 from dotenv import load_dotenv
@@ -13,6 +14,11 @@ load_dotenv()
 def main():
     """Main application entry point."""
     try:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+
         # Initialize application manager
         app_manager = AppManager()
 

@@ -26,7 +26,8 @@ class AppManager:
             # Initialize managers
             self.state_manager = StateManager()
             self.theme_manager = ThemeManager()
-            self.error_handler = ErrorHandler(self.service_manager.logging)
+            # Fix: Use logging_service instead of logging
+            self.error_handler = ErrorHandler(self.service_manager.logging_service)
             self.export_manager = ExportManager(self.service_manager)
 
             # Initialize UI components
