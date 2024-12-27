@@ -3,6 +3,7 @@ import base64
 import logging
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
+from datetime import datetime
 
 
 class Sidebar:
@@ -421,3 +422,153 @@ class Sidebar:
         except Exception as e:
             st.error(f"Error during reset: {str(e)}")
             logging.error(f"Reset error: {str(e)}")
+
+    def _handle_file_upload(self, uploaded_files):
+        """
+        Handle the upload of multiple files to the conversation with comprehensive logging.
+
+        This method processes uploaded files while maintaining detailed logs of the process.
+        It uses the specialized logging service to track different aspects of the upload:
+        - Application events in app.log
+        - Any errors in error.log
+        - Access events in access.log
+
+        Args:
+            uploaded_files: List of StreamlitUploadedFile objects
+        """
+        try:
+            # Verify conversation selection with proper logging
+            if not st.session_state.get('selected_conv'):
+                self.service_manager.logging_service.log_error(
+                    ValueError("No conversation selected"),
+                    context={'operation': 'file_upload', 'stage': 'validation'}
+                )
+                st.error("Please select or create a conversation first")
+                return
+
+            conv_id = st.session_state.selected_conv
+
+            # Log the start of file processing
+            self.service_manager.logging_service.log_app_event(
+                event_type='file_upload_start',
+                details={
+                    'conversation_id': conv_id,
+                    'file_count': len(uploaded_files),
+                    'file_names': [f.name for f in uploaded_files]
+                }
+            )
+
+            # Initialize processing metrics
+            processing_metrics = {
+                'total_files': len(uploaded_files),
+                'processed_files': 0,
+                'successful_files': 0,
+                'failed_files': []
+            }
+
+            # Process each uploaded file with detailed logging
+            for uploaded_file in uploaded_files:
+                try:
+                    # Log access attempt for each file
+                    self.service_manager.logging_service.log_access(
+                        user_id=st.session_state.get('user_id', 'anonymous'),
+                        resource=f'file/{uploaded_file.name}',
+                        action='upload',
+                        status='processing',
+                        details={'conversation_id': conv_id}
+                    )
+
+                    # Process file through service manager
+                    processed_file = self.service_manager.handle_file_upload(
+                        [uploaded_file],
+                        conv_id
+                    )
+
+                    if processed_file:
+                        processing_metrics['successful_files'] += 1
+
+                        # Log successful file processing
+                        self.service_manager.logging_service.log_access(
+                            user_id=st.session_state.get('user_id', 'anonymous'),
+                            resource=f'file/{uploaded_file.name}',
+                            action='upload',
+                            status='success',
+                            details={
+                                'conversation_id': conv_id,
+                                'file_type': uploaded_file.type,
+                                'file_size': uploaded_file.size
+                            }
+                        )
+
+                        # Add file message to conversation
+                        self.service_manager.chat_manager.add_message(
+                            conv_id=conv_id,
+                            content=f"📎 Uploaded file: {uploaded_file.name}",
+                            sender="user",
+                            metadata={
+                                'file_type': uploaded_file.type,
+                                'file_name': uploaded_file.name,
+                                'upload_timestamp': datetime.now().isoformat(),
+                                'file_size': uploaded_file.size,
+                                'processing_status': 'success'
+                            }
+                        )
+
+                        # Show success message
+                        st.success(f"Successfully uploaded: {uploaded_file.name}")
+
+                except Exception as e:
+                    # Log file processing error
+                    self.service_manager.logging_service.log_error(
+                        error=e,
+                        context={
+                            'operation': 'file_upload',
+                            'file_name': uploaded_file.name,
+                            'conversation_id': conv_id
+                        }
+                    )
+
+                    processing_metrics['failed_files'].append({
+                        'file_name': uploaded_file.name,
+                        'error': str(e)
+                    })
+
+                    st.error(f"Error processing {uploaded_file.name}: {str(e)}")
+
+                finally:
+                    processing_metrics['processed_files'] += 1
+
+            # Log final processing metrics
+            self.service_manager.logging_service.log_app_event(
+                event_type='file_upload_complete',
+                details={
+                    'conversation_id': conv_id,
+                    'metrics': processing_metrics
+                }
+            )
+
+            # Show summary for multiple files
+            if len(uploaded_files) > 1:
+                success_count = processing_metrics['successful_files']
+                total_files = processing_metrics['total_files']
+                if success_count == total_files:
+                    st.success(f"Successfully uploaded all {total_files} files!")
+                else:
+                    st.warning(
+                        f"Uploaded {success_count} out of {total_files} files. "
+                        "Check the logs for details on failed uploads."
+                    )
+
+            # Force UI update
+            st.rerun()
+
+        except Exception as e:
+            # Log any unexpected errors during the overall process
+            self.service_manager.logging_service.log_error(
+                error=e,
+                context={
+                    'operation': 'file_upload_process',
+                    'conversation_id': st.session_state.get('selected_conv')
+                }
+            )
+            st.error(f"An unexpected error occurred during file upload: {str(e)}")

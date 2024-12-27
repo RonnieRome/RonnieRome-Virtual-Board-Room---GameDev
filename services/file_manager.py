@@ -1,11 +1,16 @@
 import io
 import base64
+import logging
+import PyPDF2
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageGrab
 from io import BytesIO
 from typing import Dict, List, Tuple, Optional, Union
 from config.app_config import AppConfig
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 class FileManager:
@@ -14,23 +19,130 @@ class FileManager:
         self.config.initialize_directories()
 
     def handle_file_upload(self, file, conv_id: str) -> Dict:
-        """Process a single uploaded file and return its data."""
+        """
+        Process a single uploaded file and return its data.
+        Supports image, PDF, and text files with appropriate handling for each type.
+        """
+        file_extension = file.name.split('.')[-1].lower() if '.' in file.name else ''
+
         if file.type.startswith('image'):
             return self._process_image_file(file)
+        elif file_extension == 'pdf':
+            return self._process_pdf_file(file)
         else:
             return self._process_text_file(file)
 
+    def _process_pdf_file(self, file) -> Dict:
+        """
+        Extract and process content from PDF files.
+        Handles text extraction page by page and includes metadata when available.
+        """
+        try:
+            pdf_bytes = io.BytesIO(file.read())
+            pdf_reader = PyPDF2.PdfReader(pdf_bytes)
+            content = []
+            total_pages = len(pdf_reader.pages)
+
+            # Extract text from each page
+            for page_num in range(total_pages):
+                try:
+                    page = pdf_reader.pages[page_num]
+                    text = page.extract_text()
+                    if text.strip():
+                        content.append(f"[Page {page_num + 1}]\n{text}")
+                except Exception as e:
+                    logger.warning(f"Page {page_num + 1} extraction failed: {str(e)}")
+                    content.append(f"[Page {page_num + 1} - Extraction Error]")
+
+            # Get PDF metadata
+            metadata = pdf_reader.metadata or {}
+
+            return {
+                'name': file.name,
+                'type': 'pdf',
+                'content': '\n\n'.join(content),
+                'metadata': {
+                    'title': metadata.get('/Title', 'Untitled'),
+                    'author': metadata.get('/Author', 'Unknown'),
+                    'pages': total_pages
+                },
+                'language': 'pdf',
+                'stored_at': datetime.now().isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"PDF processing error: {str(e)}")
+
     def handle_multiple_files(self, files: List, conv_id: str) -> List[Dict]:
-        """Process multiple uploaded files."""
+        """Process multiple uploaded files and collect their data."""
         stored_files = []
         for file in files:
             try:
                 file_data = self.handle_file_upload(file, conv_id)
                 stored_files.append(file_data)
             except Exception as e:
-                print(f"Error processing file {file.name}: {str(e)}")
+                logger.error(f"File processing error - {file.name}: {str(e)}")
                 continue
         return stored_files
+
+    def _process_image_file(self, file) -> Dict:
+        """Transform and encode image files for storage and display."""
+        try:
+            image = Image.open(file)
+            buffered = io.BytesIO()
+            image.save(buffered, format=image.format)
+            image_data = base64.b64encode(buffered.getvalue()).decode()
+
+            return {
+                'name': file.name,
+                'type': 'image',
+                'content': image_data,
+                'format': image.format,
+                'language': 'image',
+                'stored_at': datetime.now().isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"Image processing error: {str(e)}")
+
+    def _process_text_file(self, file) -> Dict:
+        """
+        Process text files with robust encoding detection and handling.
+        Supports multiple encodings and includes fallback mechanisms.
+        """
+
+        def try_decode(bytes_content, encodings):
+            for encoding in encodings:
+                try:
+                    return bytes_content.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            return None
+
+        try:
+            bytes_content = file.read()
+            encodings = ['utf-8', 'latin-1', 'cp1252', 'ascii']
+
+            try:
+                import chardet
+                detected = chardet.detect(bytes_content)
+                if detected and detected['confidence'] > 0.7:
+                    encodings.insert(0, detected['encoding'])
+            except ImportError:
+                pass
+
+            content = try_decode(bytes_content, encodings)
+            if content is None:
+                content = bytes_content.decode('latin-1')
+
+            return {
+                'name': file.name,
+                'type': 'text',
+                'content': content,
+                'language': file.name.split('.')[-1] if '.' in file.name else 'txt',
+                'encoding': encodings[0],
+                'stored_at': datetime.now().isoformat()
+            }
+        except Exception as e:
+            raise Exception(f"Text processing error: {str(e)}")
 
     def get_clipboard_image(self) -> Tuple[bool, Optional[bytes], Optional[str]]:
         """Retrieve image data from clipboard using multiple methods."""
@@ -134,39 +246,67 @@ class FileManager:
 
         return exported_files
 
-    def _process_image_file(self, file) -> Dict:
-        """Process uploaded image file."""
-        try:
-            image = Image.open(file)
-            buffered = io.BytesIO()
-            image.save(buffered, format=image.format)
-            image_data = base64.b64encode(buffered.getvalue()).decode()
 
-            return {
-                'name': file.name,
-                'type': 'image',
-                'content': image_data,
-                'format': image.format,
-                'language': 'image',
-                'stored_at': datetime.now().isoformat()
-            }
-        except Exception as e:
-            raise Exception(f"Error processing image file: {str(e)}")
 
-    def _process_text_file(self, file) -> Dict:
-        """Process uploaded text file."""
+        def try_decode(bytes_content, encodings):
+            """Helper function to try different encodings."""
+            for encoding in encodings:
+                try:
+                    return bytes_content.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            return None
+
         try:
-            content = file.read().decode('utf-8')
+            # Read the file content as bytes first
+            bytes_content = file.read()
+
+            # List of encodings to try, in order of preference
+            encodings = ['utf-8', 'latin-1', 'cp1252', 'ascii']
+
+            # Try to detect encoding using chardet if available
+            try:
+                import chardet
+                detected = chardet.detect(bytes_content)
+                if detected and detected['confidence'] > 0.7:
+                    encodings.insert(0, detected['encoding'])
+            except ImportError:
+                logger.debug("chardet not available for encoding detection")
+
+            # Try each encoding
+            content = try_decode(bytes_content, encodings)
+
+            if content is None:
+                # If all text decodings fail, check if it might be a binary file
+                import magic  # python-magic library
+                file_type = magic.from_buffer(bytes_content)
+
+                if 'text' not in file_type.lower():
+                    raise Exception(f"File appears to be binary: {file_type}")
+                else:
+                    # Last resort: use latin-1 which can decode any byte sequence
+                    content = bytes_content.decode('latin-1')
+
+            # Get file extension and determine language
             file_extension = file.name.split('.')[-1] if '.' in file.name else 'txt'
 
-            return {
+            # Create the response dictionary
+            file_data = {
                 'name': file.name,
                 'type': 'text',
                 'content': content,
                 'language': file_extension,
+                'encoding': encodings[0],  # Store which encoding worked
                 'stored_at': datetime.now().isoformat()
             }
+
+            # Log successful processing
+            logger.debug(f"Successfully processed file {file.name} with encoding {encodings[0]}")
+
+            return file_data
+
         except Exception as e:
+            logger.error(f"Error processing text file {file.name}: {str(e)}", exc_info=True)
             raise Exception(f"Error processing text file: {str(e)}")
 
     def _format_conversation_as_text(self, conversation: Dict) -> str:

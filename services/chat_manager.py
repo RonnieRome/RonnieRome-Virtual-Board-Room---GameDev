@@ -21,6 +21,37 @@ from config.ai_style_manager import AIStyleManager
 
 logger = logging.getLogger(__name__)
 
+class ImageHandler:
+    def __init__(self, storage_type="local"):
+        self.storage_type = storage_type
+        if 'image_store' not in st.session_state:
+            st.session_state.image_store = {}
+        logger.debug(f"ImageHandler initialized with storage type: {storage_type}")
+        logger.debug(f"Current store size: {len(st.session_state.image_store)} images")
+
+    def save_image(self, image_data: bytes, image_id: str) -> str:
+        try:
+            encoded_image = base64.b64encode(image_data).decode('utf-8')
+            st.session_state.image_store[image_id] = encoded_image
+            return image_id
+        except Exception as e:
+            logger.error(f"Error saving image: {str(e)}")
+            return None
+
+    def get_image(self, image_id: str) -> Optional[bytes]:
+        try:
+            if image_id in st.session_state.image_store:
+                encoded_image = st.session_state.image_store[image_id]
+                return base64.b64decode(encoded_image)
+            logger.debug(f"Image {image_id} not found")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting image: {str(e)}")
+            return None
+
+    def get_encoded_image(self, image_id: str) -> Optional[str]:
+        return st.session_state.image_store.get(image_id)
+
 @dataclass
 class FileProcessResult:
     """Data class to track file processing results."""
@@ -29,6 +60,7 @@ class FileProcessResult:
     file_type: str
     content: Optional[str] = None
     error: Optional[str] = None
+    metadata: Optional[Dict] = None
 
 class ChatHistoryManager:
     def __init__(self):
@@ -64,16 +96,32 @@ class ChatHistoryManager:
         # Add file to conversation
         self.conversations[conv_id]['files'].append(file_data)
 
-        # Add a system message about the file
+        # Add system message about the file
         file_message = self._create_file_message(file_data)
         self.conversations[conv_id]['messages'].append(file_message)
+
+        # Estimate and update token count for the file
+        tokens = self._estimate_file_tokens(file_data)
+        self._update_token_totals(self.conversations[conv_id], tokens, False)
 
         logger.debug(f"Added file {file_data['name']} to conversation {conv_id}")
 
     def _create_file_message(self, file_data: Dict) -> Dict:
-        """Create a system message for a file upload."""
-        if file_data['type'] == 'image':
+        """Create a system message for a file upload with enhanced support for multiple file types."""
+        file_type = file_data.get('type', '')
+        timestamp = datetime.now().isoformat()
+
+        if file_type == 'image':
             content = f"An image file '{file_data['name']}' has been uploaded."
+        elif file_type == 'pdf':
+            metadata = file_data.get('metadata', {})
+            content = (
+                f"PDF Document: {file_data['name']}\n"
+                f"Title: {metadata.get('title', 'Untitled')}\n"
+                f"Author: {metadata.get('author', 'Unknown')}\n"
+                f"Pages: {metadata.get('pages', 0)}\n\n"
+                f"Content:\n{file_data['content']}"
+            )
         else:
             content = (f"File uploaded: {file_data['name']}\n\n"
                        f"Content:\n{file_data['content']}")
@@ -81,8 +129,10 @@ class ChatHistoryManager:
         return {
             'role': 'system',
             'content': content,
-            'timestamp': datetime.now().isoformat(),
-            'type': 'file_upload'
+            'timestamp': timestamp,
+            'type': 'file_upload',
+            'file_type': file_type,
+            'metadata': file_data.get('metadata')
         }
 
     def get_conversation(self, conv_id: str) -> Optional[Dict]:
@@ -534,18 +584,40 @@ class ChatHistoryManager:
             raise RuntimeError(f"Error processing message: {str(e)}")
 
     def _prepare_context_messages(self, conversation: Dict, style: str, service: str) -> List[Dict]:
-        """Prepare context messages with style formatting for the specified service.
+        """Prepare context messages with style formatting for the specified service."""
+        messages = []
 
-        Args:
-            conversation (Dict): The conversation history and metadata
-            style (str): The selected conversation style (e.g., "Professor", "Engineer")
-            service (str): The AI service being used (e.g., "claude", "chatgpt", "gemini")
+        for msg in conversation.get('messages', []):
+            if msg.get('type') == 'file_upload':
+                # Handle file upload messages
+                formatted_msg = self._format_file_message(msg, service)
+                messages.append(formatted_msg)
+            else:
+                # Handle regular messages
+                role = 'assistant' if msg['sender'] == 'assistant' else 'user'
+                messages.append({
+                    'role': role,
+                    'content': msg['content']
+                })
 
-        Returns:
-            List[Dict]: Formatted messages appropriate for the specified service
-        """
-        messages = conversation.get('messages', [])
         return self.style_manager.format_messages_for_service(messages, style, service)
+
+    def _format_file_message(self, msg: Dict, service: str) -> Dict:
+        """Format file upload messages for different AI services."""
+        file_type = msg.get('file_type', '')
+
+        if file_type == 'pdf':
+            content = (
+                "I've processed a PDF document with the following details:\n"
+                f"{msg['content']}"
+            )
+        else:
+            content = msg['content']
+
+        return {
+            'role': 'system',
+            'content': content
+        }
 
     def list_conversations(self) -> List[str]:
         """List all available conversations."""
@@ -618,6 +690,75 @@ class ChatHistoryManager:
         except Exception as e:
             logging.error(f"Token estimation error: {e}")
             return len(text.split())  # Fallback estimation
+
+    def _estimate_pdf_tokens(self, pdf_data: Dict, style: str = "Professor") -> int:
+        """
+        Estimate token count for PDF content with style consideration.
+
+        This method provides accurate token estimation for PDF content by considering
+        both the metadata and content sections separately. It applies style multipliers
+        while ensuring proper handling of structured PDF data.
+
+        Args:
+            pdf_data (Dict): The PDF file data including metadata and content
+            style (str): The conversation style to apply
+
+        Returns:
+            int: Estimated token count with style multiplier applied
+        """
+        try:
+            # Estimate tokens for metadata
+            metadata = pdf_data.get('metadata', {})
+            metadata_text = (
+                f"Title: {metadata.get('title', 'Untitled')}\n"
+                f"Author: {metadata.get('author', 'Unknown')}\n"
+                f"Pages: {metadata.get('pages', 0)}"
+            )
+            metadata_tokens = len(self.gpt_encoder.encode(metadata_text))
+
+            # Estimate tokens for content
+            content_tokens = len(self.gpt_encoder.encode(pdf_data.get('content', '')))
+
+            # Calculate total tokens
+            total_tokens = metadata_tokens + content_tokens
+
+            # Apply style multiplier
+            style_config = self.style_manager.get_style_config(style)
+            return int(total_tokens * style_config.token_multiplier)
+
+        except Exception as e:
+            logging.error(f"PDF token estimation error: {e}")
+            # Fallback to basic estimation
+            return len(pdf_data.get('content', '').split())
+
+    def _estimate_file_tokens(self, file_data: Dict, style: str = "Professor") -> int:
+        """Estimate token count for file content with style consideration."""
+        try:
+            file_type = file_data.get('type', '')
+            content = file_data.get('content', '')
+            metadata = file_data.get('metadata', {})
+
+            if file_type == 'pdf':
+                # For PDFs, include metadata in token count
+                metadata_text = (
+                    f"Title: {metadata.get('title', 'Untitled')}\n"
+                    f"Author: {metadata.get('author', 'Unknown')}\n"
+                    f"Pages: {metadata.get('pages', 0)}"
+                )
+                total_text = f"{metadata_text}\n\n{content}"
+            else:
+                total_text = content
+
+            # Calculate base tokens
+            base_tokens = len(self.gpt_encoder.encode(str(total_text)))
+
+            # Apply style multiplier
+            style_config = self.style_manager.get_style_config(style)
+            return int(base_tokens * style_config.token_multiplier)
+
+        except Exception as e:
+            logger.error(f"File token estimation error: {e}")
+            return len(str(content).split())  # Fallback estimation
 
     def _update_token_totals(self, conversation: Dict, tokens: int, is_input: bool) -> None:
         """Update token totals with style consideration."""
@@ -751,39 +892,3 @@ class ChatHistoryManager:
             return f"An error occurred with {service.upper()}. Please try again or switch to another AI service."
 
 
-class ImageHandler:
-    def __init__(self, storage_type="local"):
-        self.storage_type = storage_type
-        if 'image_store' not in st.session_state:
-            st.session_state.image_store = {}
-        print(f"ImageHandler initialized with storage type: {storage_type}")
-        print(f"Current store size: {len(st.session_state.image_store)} images")
-
-    def save_image(self, image_data: bytes, image_id: str) -> str:
-        """Save an image to session state."""
-        try:
-            print(f"Saving image with ID: {image_id}")
-            encoded_image = base64.b64encode(image_data).decode('utf-8')
-            st.session_state.image_store[image_id] = encoded_image
-            print(f"Image saved. Store now contains {len(st.session_state.image_store)} images")
-            return image_id
-        except Exception as e:
-            print(f"Error saving image: {str(e)}")
-            return None
-
-    def get_image(self, image_id: str) -> Optional[bytes]:
-        """Get image from session state."""
-        try:
-            print(f"Getting image {image_id}")
-            if image_id in st.session_state.image_store:
-                encoded_image = st.session_state.image_store[image_id]
-                return base64.b64decode(encoded_image)
-            print(f"Image {image_id} not found")
-            return None
-        except Exception as e:
-            print(f"Error getting image: {str(e)}")
-            return None
-
-    def get_encoded_image(self, image_id: str) -> Optional[str]:
-        """Get encoded image string directly."""
-        return st.session_state.image_store.get(image_id)

@@ -6,12 +6,22 @@ import base64
 from config.app_config import AppConfig
 
 
+
 class DocumentManager:
-    def __init__(self, base_dir: Optional[Path] = None):
-        self.config = AppConfig
-        self.base_dir = base_dir or self.config.BASE_DIR
-        self.documents_dir = self.base_dir / "documents"
-        self.documents_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, logging_service=None, error_handler=None):
+        """Initialize the DocumentManager with required services.
+
+        Args:
+            logging_service: Optional service for logging
+            error_handler: Optional service for handling errors
+        """
+        self.logging_service = logging_service
+        self.error_handler = error_handler
+
+    def handle_document(self, document):
+        """Handle document processing"""
+        if self.logging_service:
+            self.logging_service.log_event("Processing document")
 
     def store_document(self, document_data: Dict, conversation_id: str) -> str:
         """Store a document with metadata and return its identifier."""
