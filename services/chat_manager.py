@@ -4,63 +4,81 @@ import base64
 import tiktoken
 import openai
 import google.generativeai as genai
-import asyncio
 import uuid
 import requests
 import logging
-import traceback
-import time
 import streamlit as st
 
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List, Any
-from config.app_config import AppConfig
 from anthropic import Anthropic
 from dotenv import load_dotenv
-
-logging.basicConfig(
-    filename='image_handler.log',
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
+from config.app_config import AppConfig
+from config.ai_style_manager import AIStyleManager
 
 
 class ChatHistoryManager:
     def __init__(self):
         self.config = AppConfig()
+        self.image_handler = ImageHandler(storage_type="local")
+        self.style_manager = AIStyleManager()
         load_dotenv()
 
-        # Initialize API clients
-        self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        self.anthropic = Anthropic(api_key=os.getenv('CLAUDE_API_KEY'))
-        if not os.getenv('CLAUDE_API_KEY'):
-            raise ValueError("CLAUDE_API_KEY environment variable is not set")
+        # Initialize API clients with proper error handling
+        self._initialize_api_clients()
 
-        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-        self.gemini = genai.GenerativeModel('gemini-pro')
-
-        self.image_handler = ImageHandler()
-
-        # Set up directories
+        # Set up directories with enhanced organization
         self.history_dir = Path("chat_histories")
         self.exports_dir = Path("exports")
         self.history_dir.mkdir(exist_ok=True)
         self.exports_dir.mkdir(exist_ok=True)
 
-        # Initialize token counter
+        # Initialize token counter with style consideration
         self.gpt_encoder = tiktoken.encoding_for_model("gpt-4")
 
+    def _initialize_api_clients(self):
+        """Initialize API clients with proper error handling."""
+        try:
+            self.openai = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            self.anthropic = Anthropic(api_key=os.getenv('CLAUDE_API_KEY'))
+            if not os.getenv('CLAUDE_API_KEY'):
+                raise ValueError("CLAUDE_API_KEY environment variable is not set")
+
+            genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+            self.gemini = genai.GenerativeModel('gemini-pro')
+
+        except Exception as e:
+            logging.error(f"Error initializing API clients: {str(e)}")
+            raise
 
     def create_conversation(self, title: str) -> str:
-        """Create a new conversation with the given title."""
+        """Create a new conversation with current style configuration.
+
+        Args:
+            title (str): The title for the new conversation
+
+        Returns:
+            str: The unique conversation ID
+        """
+        # Get current style from session state or use default
+        current_style = st.session_state.get('selected_style', 'Professor')
+
         conv_id = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         conv_path = self._get_conv_path(conv_id)
+
+        # Get style configuration for current style
+        style_config = self.style_manager.get_style_config(current_style)
 
         conversation = {
             "title": title,
             "created_at": datetime.now().isoformat(),
+            "style": current_style,  # Store the style name
+            "style_config": {
+                "name": style_config.name,
+                "formatting_rules": style_config.formatting_rules,
+                "token_multiplier": style_config.token_multiplier
+            },
             "messages": [],
             "token_totals": {
                 "input": 0,
@@ -89,6 +107,31 @@ class ChatHistoryManager:
         if conversation and "messages" in conversation:
             return conversation["messages"]
         return []
+
+    def get_conversation_style(self, conv_id: str) -> str:
+        """Get the current style for a conversation."""
+        conversation = self.get_conversation(conv_id)
+        return conversation.get('style', 'Professor')
+
+    def update_conversation_style(self, conv_id: str) -> None:
+        """Update conversation style based on current session state."""
+        conv_path = self._get_conv_path(conv_id)
+        conversation = self._load_conversation(conv_path)
+
+        # Get current style from session state
+        current_style = st.session_state.get('selected_style', 'Professor')
+
+        # Only update if style has changed
+        if current_style != conversation.get('style'):
+            style_config = self.style_manager.get_style_config(current_style)
+            conversation["style"] = current_style
+            conversation["style_config"] = {
+                "name": style_config.name,
+                "formatting_rules": style_config.formatting_rules,
+                "token_multiplier": style_config.token_multiplier
+            }
+
+            self._save_conversation(conv_path, conversation)
 
     def send_to_claude(self, conv_id: str, prompt: str, model: str = "claude-3-5-sonnet-20241022") -> str:
         """Send a message to Claude with context from previous messages."""
@@ -308,6 +351,7 @@ class ChatHistoryManager:
                 return ("I apologize, but I cannot generate this image due to content "
                         "policy restrictions. Please try modifying your prompt.")
             raise RuntimeError(f"Error generating image: {str(e)}")
+
     def _sanitize_dalle_prompt(self, prompt: str) -> str:
         """
         Sanitize and format prompts for DALL-E to reduce policy violations.
@@ -352,37 +396,99 @@ class ChatHistoryManager:
     def add_message(self, conv_id: str, content: str, sender: str,
                     ai_service: Optional[str] = None, model: Optional[str] = None,
                     tokens: Optional[int] = None, metadata: Optional[dict] = None) -> None:
-        """Add a message to the conversation history.
-
-        Args:
-            conv_id (str): Conversation identifier
-            content (str): Message content
-            sender (str): Message sender ('user' or 'assistant')
-            ai_service (Optional[str]): AI service used (e.g., 'dalle', 'claude')
-            model (Optional[str]): Model used by the AI service
-            tokens (Optional[int]): Token count for the message
-            metadata (Optional[dict]): Additional metadata for special message types (e.g., images)
-        """
+        """Add a message to the conversation with current style tracking."""
         conv_path = self._get_conv_path(conv_id)
         conversation = self._load_conversation(conv_path)
 
+        # Get current style from session state or conversation
+        current_style = st.session_state.get('selected_style',
+                                             conversation.get('style', 'Professor'))
+
+        # Update conversation style if it changed
+        if current_style != conversation.get('style'):
+            conversation['style'] = current_style
+            style_config = self.style_manager.get_style_config(current_style)
+            conversation['style_config'] = {
+                "name": style_config.name,
+                "formatting_rules": style_config.formatting_rules,
+                "token_multiplier": style_config.token_multiplier
+            }
+
+        # Create message with style information
         message = {
             "content": content,
             "sender": sender,
             "timestamp": datetime.now().isoformat(),
-            "tokens": tokens if tokens is not None else self.estimate_tokens(content)
+            "style": current_style,
+            "tokens": tokens if tokens is not None else
+            self.estimate_tokens(content, current_style)
         }
 
         if ai_service:
             message["ai_service"] = ai_service
             message["model"] = model
 
-        # Add metadata if provided (for images, etc.)
         if metadata:
             message["metadata"] = metadata
 
+        # Update token totals
+        if tokens:
+            self._update_token_totals(conversation, tokens, sender == "user")
+
         conversation["messages"].append(message)
         self._save_conversation(conv_path, conversation)
+
+    def send_to_service(self, conv_id: str, prompt: str, service: str,
+                        model: str, style: str = "Professor") -> str:
+        """Generic method to send messages to any AI service with style handling."""
+        try:
+            # Get conversation and style configuration
+            conversation = self.get_conversation(conv_id)
+            style_config = self.style_manager.get_style_config(style)
+
+            # Prepare context with style
+            context_messages = self._prepare_context_messages(conversation, style, service)
+
+            # Add user message with style consideration
+            input_tokens = self.estimate_tokens(prompt, style)
+            self.add_message(conv_id, prompt, "user", service, model, style, tokens=input_tokens)
+
+            # Send to appropriate service
+            if service == "claude":
+                response = self._send_to_claude(context_messages, prompt, model, style)
+            elif service == "chatgpt":
+                response = self._send_to_chatgpt(context_messages, prompt, model, style)
+            elif service == "gemini":
+                response = self._send_to_gemini(context_messages, prompt, model, style)
+            else:
+                raise ValueError(f"Unsupported service: {service}")
+
+            # Process response
+            response_content = self._extract_response_content(response, service)
+            output_tokens = self.estimate_tokens(response_content, style)
+
+            # Add assistant's response with style
+            self.add_message(conv_id, response_content, "assistant", service, model, style, tokens=output_tokens)
+
+            return response_content
+
+        except Exception as e:
+            logging.error(f"Error in send_to_service: {str(e)}")
+            raise RuntimeError(f"Error processing message: {str(e)}")
+
+    def _prepare_context_messages(self, conversation: Dict, style: str, service: str) -> List[Dict]:
+        """Prepare context messages with style formatting for the specified service.
+
+        Args:
+            conversation (Dict): The conversation history and metadata
+            style (str): The selected conversation style (e.g., "Professor", "Engineer")
+            service (str): The AI service being used (e.g., "claude", "chatgpt", "gemini")
+
+        Returns:
+            List[Dict]: Formatted messages appropriate for the specified service
+        """
+        messages = conversation.get('messages', [])
+        return self.style_manager.format_messages_for_service(messages, style, service)
 
     def list_conversations(self) -> List[str]:
         """List all available conversations."""
@@ -443,13 +549,34 @@ class ChatHistoryManager:
                 }
             }
 
-    def estimate_tokens(self, text: str) -> int:
-        """Estimate token count for a piece of text."""
+    def estimate_tokens(self, text: str, style: str = "Professor") -> int:
+        """Estimate token count with style consideration."""
         try:
-            return len(self.gpt_encoder.encode(str(text)))
+            # Get base token count
+            base_tokens = len(self.gpt_encoder.encode(str(text)))
+
+            # Apply style multiplier
+            style_config = self.style_manager.get_style_config(style)
+            return int(base_tokens * style_config.token_multiplier)
         except Exception as e:
-            print(f"Token estimation error: {e}")
-            return 0
+            logging.error(f"Token estimation error: {e}")
+            return len(text.split())  # Fallback estimation
+
+    def _update_token_totals(self, conversation: Dict, tokens: int, is_input: bool) -> None:
+        """Update token totals with style consideration."""
+        totals = conversation.get('token_totals', {
+            "input": 0,
+            "output": 0,
+            "total": 0
+        })
+
+        if is_input:
+            totals["input"] += tokens
+        else:
+            totals["output"] += tokens
+
+        totals["total"] += tokens
+        conversation["token_totals"] = totals
 
     def update_conversation_tokens(self, conv_id: str) -> None:
         """

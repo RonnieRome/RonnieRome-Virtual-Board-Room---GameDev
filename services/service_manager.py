@@ -1,9 +1,13 @@
-from typing import List, Dict, Optional
-from config.app_config import AppConfig
-from services.chat_manager import ChatHistoryManager  # Updated import
-from services.logging_service import LoggingService
 import logging
 import os
+import streamlit as st
+
+from typing import List, Dict, Optional
+from config.app_config import AppConfig
+from config.ai_style_manager import AIStyleManager
+from services.chat_manager import ChatHistoryManager  # Updated import
+from services.logging_service import LoggingService
+
 
 # Set up debug logging
 logging.basicConfig(level=logging.DEBUG)
@@ -35,7 +39,10 @@ class ServiceManager:
             self.logging.log_app_event('service_manager_init', {
                 'status': 'completed',
                 'services': ['chat_manager']
+
+
             })
+            self.style_manager = AIStyleManager()
 
         except Exception as e:
             logger.error(f"Error during ServiceManager initialization: {str(e)}", exc_info=True)
@@ -60,25 +67,37 @@ class ServiceManager:
         service = service.lower()
 
         try:
+            # Get the conversation and current style
+            conversation = self.chat_manager.get_conversation(conv_id)
+            current_style = st.session_state.get('selected_style', 'Business')
+
+            # Format messages with style before sending to specific service
+            messages = conversation.get('messages', []) if conversation else []
+            formatted_messages = AIStyleManager.format_messages_for_service(
+                messages,
+                current_style,
+                service
+            )
+
             if service == 'claude':
                 logger.debug("Routing request to Claude service")
                 return self.chat_manager.send_to_claude(
-                    conv_id, prompt, model, image_data
+                    conv_id, prompt, model, formatted_messages
                 )
             elif service == 'chatgpt':
                 logger.debug("Routing request to ChatGPT service")
                 return self.chat_manager.send_to_chatgpt(
-                    conv_id, prompt, model
+                    conv_id, prompt, model, formatted_messages
                 )
             elif service == 'dalle':
                 logger.debug("Routing request to DALL-E service")
                 return self.chat_manager.generate_image_dalle(
-                    conv_id, prompt, model
+                    conv_id, prompt, model,
                 )
             elif service == 'gemini':
                 logger.debug("Routing request to Gemini service")
                 return self.chat_manager.send_to_gemini(
-                    conv_id, prompt, model
+                    conv_id, prompt, model, formatted_messages
                 )
             else:
                 logger.error(f"Unsupported AI service requested: {service}")

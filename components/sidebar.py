@@ -2,7 +2,7 @@ import streamlit as st
 import base64
 import logging
 from config.app_config import AppConfig
-from openai import models
+from config.ai_style_manager import AIStyleManager
 
 
 class Sidebar:
@@ -32,10 +32,16 @@ class Sidebar:
         }
     }
 
+    DALLE_SIZES = {
+        "1024x1024": "1024 x 1024",
+        "512x512": "512 x 512"
+    }
+
     def __init__(self, service_manager, state_manager):
         self.service_manager = service_manager
         self.state_manager = state_manager
         self.config = AppConfig()
+        self.style_manager = AIStyleManager()
 
     def render(self):
         """Render the complete sidebar interface."""
@@ -159,18 +165,12 @@ class Sidebar:
             if st.session_state.selected_conv:
                 self._render_ai_service_selection()
 
-    DALLE_SIZES = {
-        "1024x1024": "1024 x 1024",
-        "512x512": "512 x 512"
-    }
 
     def _render_ai_service_section(self):
         """Render AI service selection section."""
         st.divider()
         st.header("AI Service")
 
-        # Create two columns for the radio buttons
-# Create two columns for the radio buttons
         st.write("")  # Add consistent spacing
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -186,7 +186,6 @@ class Sidebar:
             st.session_state.ai_service = selected_service
             st.rerun()
 
-        # Get model options for selected service
         current_model_options = self.MODEL_OPTIONS[selected_service]
 
         with col2:
@@ -198,58 +197,83 @@ class Sidebar:
             )
         st.session_state.model_key = selected_model
 
-        style_col1, style_col2 = st.columns([5, 6])
         st.write("")
 
+        style_descriptions = AIStyleManager.get_style_descriptions()
+
+        # Create columns for style selection
+        style_col1, style_col2 = st.columns([4.5, 6.5])  # Proportions adjusted for balance
+
+        # Column 1: Style selection
         with style_col1:
-            STYLE_DESCRIPTIONS = {
-                "Business": [
-                    "📈 Formal and persuasive language",
-                    "📞 Suitable for communication and marketing"
-                ],
-                "Engineer": [
-                    "🛠️ System Architecture and Coding",
-                    "📐 Science and Engineering format"
-                ],
-                "Executive": [
-                    "💼 Planning",
-                    "📊 Analysis",
-                    "✍️ Summarized Contents"
-                ],
-                "Professor": [
-                    "🌟 Guidance in developments",
-                    "🎨 Data expertises"
-                ]
-            }
+            st.markdown(
+                """
+                <style>
+                /* Move the radio button section to the bottom of the column */
+                div[data-testid="stVerticalBlock"] {
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: flex-end; /* Align content to the bottom */
+                    height: 100%; /* Ensure full height of the column */
+                }
+                div[data-testid="stRadio"] {
+                    margin-bottom: 0; /* Remove unnecessary margin */
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
             selected_style = st.radio(
                 "**Select Style**",
-                list(STYLE_DESCRIPTIONS.keys()),
+                list(style_descriptions.keys()),
+                key="style_selector",
             )
-            st.session_state.selected_style = selected_style
-
+        # Column 2: Style details
         with style_col2:
-            st.markdown("<span style='font-size: small; color: white;'>**Details**</span>", unsafe_allow_html=True)
-
-            formatted_description = ("<ul style='padding-left: 0rem; line-height: 1.4; text-align: left; "
-                                     "vertical-align: top; font-size: small; white-space: pre-wrap; list-style-type: none; "
-                                     "margin-top: -0.5rem; color: white;'>")
-            for item in STYLE_DESCRIPTIONS[selected_style]:
-                formatted_description += f"<li style='text-align: left;'>{item}</li>"
-            formatted_description += "</ul>"
             st.markdown(
-                formatted_description,
-                unsafe_allow_html=True
+                """
+                <style>
+                .custom-box-container {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: flex-start; /* Align content to the left */
+                    justify-content: flex-start; /* Ensure alignment at the top */
+                    margin-top: 0; /* Ensure no extra margin */
+                    height: auto; /* Adjust height to fit content */
+                }
+                .custom-header {
+                    font-size: 12px; /* Smaller header font size */
+                    font-weight: bold;
+                    color: rgba(255, 255, 255, 0.9); /* Match the theme */
+                    text-align: center; /* Center the header text horizontally */
+                    width: 100%; /* Full width to allow centering */
+                }
+                .custom-box {
+                    background-color: #7f7f7f; /* Comfortable gray background */
+                    color: #66666; /* Light grey font color */
+                    border-radius: 5px; /* Rounded corners */
+                    padding: 5.25px 24px; /* Adjusted padding */
+                    font-size: 10px; /* Smaller font size */
+                    width: 100%; /* Full width */
+                    text-align: left; /* Left-aligned text */
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+                }
+                </style>
+                <div class="custom-box-container">
+                    <div class="custom-header">Style Details</div> <!-- Header will now be centered horizontally -->
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-
-        if selected_service == "dalle":
-            st.write("")  # Add spacing
-            selected_size = st.radio(
-                "Select Image Size",
-                list(self.DALLE_SIZES.keys()),
-                format_func=lambda x: self.DALLE_SIZES[x],
-                index=0
-            )
-            st.session_state.dalle_size = selected_size
+            for detail in style_descriptions[selected_style]:
+                st.markdown(
+                    f"""
+                    <div class="custom-box">
+                        {detail}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     def _render_token_display(self):
         """Display token usage statistics for the current conversation.
