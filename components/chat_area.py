@@ -164,83 +164,57 @@ class ChatArea:
             print(f"Error details: {str(e)}")
 
     def _display_message_content(self, msg):
-        """Display message content with proper styling and opacity.
-
-        This method handles both regular text messages and image messages with
-        appropriate styling and formatting for each type.
-
-        Args:
-            msg (dict): The message dictionary containing content and metadata
-        """
+        """Display message content with clean styling."""
         if msg.get('metadata', {}).get('type') == 'image':
             try:
-                # Get image from storage
                 image_id = msg['metadata']['image_id']
-                encoded_image = self.image_handler.image_store.get(image_id)
+                encoded_image = st.session_state.image_store.get(image_id)
 
                 if encoded_image:
                     image_data = base64.b64decode(encoded_image)
 
-                    # Display prompt with styling
+                    # Display the prompt elegantly
                     st.markdown(
                         f"""
-                        <div class='chat-message' style='padding: 10px; border-radius: 5px; margin-bottom: 10px;'>
-                            <strong>Prompt:</strong> {msg['metadata']['prompt']}
+                        <div style='background-color: rgba(255, 255, 255, 0.95); 
+                                 padding: 15px; 
+                                 border-radius: 8px; 
+                                 margin-bottom: 15px;
+                                 border: 1px solid #eee;'>
+                            <p style='color: #666; margin-bottom: 8px;'>Prompt:</p>
+                            <p style='color: #333; margin: 0;'>{msg['metadata']['prompt']}</p>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
 
-                    # Display image container
-                    st.markdown(
-                        """
-                        <div class='chat-message' style='padding: 10px; border-radius: 5px; margin-bottom: 10px;'>
-                        """,
-                        """
-                        <div style='background-color: rgba(255, 255, 255, 0.95); 
-                                 padding: 10px; 
-                                 border-radius: 5px; 
-                                 margin-bottom: 10px;'>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
+                    # Display the image
                     st.image(
                         image_data,
-                        caption=f"DALL-E Generated Image",
+                        caption="DALL-E Generated Image",
                         use_container_width=True
                     )
 
-                    st.markdown("</div></div>", unsafe_allow_html=True)
-
-                    # Display image details
+                    # Show details in a clean expander
                     with st.expander("Image Details"):
-                        st.markdown(
-                            f"""
-                            <div style='background-color: rgba(255, 255, 255, 0.95); 
-                                     padding: 10px; 
-                                     border-radius: 5px;'>
-                                <p><strong>Model:</strong> {msg['metadata']['model']}</p>
-                                <p><strong>Size:</strong> {msg['metadata']['size']}</p>
-                                <p><strong>Generated at:</strong> {msg['metadata']['generated_at']}</p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                        details_md = f"""
+                        | Property | Value |
+                        |----------|-------|
+                        | Model | {msg['metadata']['model']} |
+                        | Size | {msg['metadata']['size']} |
+                        | Generated | {datetime.fromisoformat(msg['metadata']['generated_at']).strftime('%Y-%m-%d %H:%M:%S')} |
+                        """
+                        st.markdown(details_md)
+
                 else:
-                    st.warning("Image data not found")
+                    st.info("Image temporarily unavailable. Please try regenerating the image.")
+
             except Exception as e:
-                st.error(f"Error displaying image: {str(e)}")
+                st.error("Unable to display the image. Please try regenerating it.")
+
         else:
-            # Regular text message display
-            st.markdown(
-                f"""
-                <div class='chat-message' style='padding: 10px; border-radius: 5px;'>
-                    {msg['content']}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            # Regular message display
+            st.markdown(msg['content'])
 
     def _render_theme_selector(self):
         """Render theme selection dropdown"""

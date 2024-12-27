@@ -13,22 +13,102 @@ class StateManager:
         """Initialize default session state values."""
         defaults = {
             'show_title_input': True,
+            'show_code_popup': False,
+            'theme': 'None',
+
             'selected_conv': None,
             'messages': [],
+
             'ai_service': 'Claude',
-            'analysis_results': [],
-            'show_code_popup': False,
-            'theme': 'Pastel Delight',
-            'clipboard_image': None,
             'model_key': None,
-            'token_count': 0,
-            'error_count': 0,
-            'last_update': datetime.now().isoformat()
+            'analysis_results': [],
+
+            'clipboard_image': None,
+            'uploaded_files': [],
+
+            'token_claude': 0,
+            'token_chatgpt': 0,
+            'token_dalle': 0,
+            'token_gemini': 0,
+            'token_input': 0,
+            'token_total': 0,
+
+            'initialized': False,
+            'last_update': datetime.now().isoformat(),
+            'last_save': None,
+            'error_count': 0
         }
 
         for key, default_value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = default_value
+
+    def reset_state(self, preserve_tokens: bool = True) -> None:
+        """
+        Reset the session state while optionally preserving token information.
+
+        Args:
+            preserve_tokens (bool): Whether to preserve token counting information
+        """
+        # Store token information if needed
+        token_info = {}
+        if preserve_tokens:
+            token_keys = [key for key in st.session_state.keys() if key.startswith('token_')]
+            token_info = {key: st.session_state[key] for key in token_keys}
+
+        # Store system state
+        system_state = {
+            'initialized': st.session_state.get('initialized', False),
+            'last_save': st.session_state.get('last_save')
+        }
+
+        # Clear all state except preserved values
+        self.clear_state()
+
+        # Reinitialize with defaults
+        self._initialize_session_state()
+
+        # Restore token information if preserved
+        if preserve_tokens:
+            for key, value in token_info.items():
+                st.session_state[key] = value
+
+        # Restore system state
+        st.session_state.update(system_state)
+
+    def update_token_count(self, service: str, count: int) -> None:
+        """
+        Update token count for a specific service and total.
+
+        Args:
+            service (str): The AI service name
+            count (int): Number of tokens to add
+        """
+        service_key = f'token_{service.lower()}'
+        if service_key in st.session_state:
+            st.session_state[service_key] += count
+        else:
+            st.session_state[service_key] = count
+
+        st.session_state['token_total'] += count
+
+    def get_token_counts(self) -> Dict[str, int]:
+        """Get all token counts as a dictionary."""
+        return {
+            key.replace('token_', ''): value
+            for key, value in st.session_state.items()
+            if key.startswith('token_')
+        }
+
+    def clear_file_state(self) -> None:
+        """Clear all file-related state while preserving other state."""
+        file_keys = ['clipboard_image', 'uploaded_files']
+        for key in file_keys:
+            if key in st.session_state:
+                if isinstance(st.session_state[key], list):
+                    st.session_state[key] = []
+                else:
+                    st.session_state[key] = None
 
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get value from session state with optional default."""
@@ -53,7 +133,6 @@ class StateManager:
         else:
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
-            self._initialize_session_state()
 
     def increment_counter(self, key: str, amount: int = 1) -> int:
         """Increment a numeric session state value."""
@@ -88,8 +167,8 @@ class StateManager:
             'selected_conv': self.get_state('selected_conv'),
             'ai_service': self.get_state('ai_service'),
             'model_key': self.get_state('model_key'),
-            'token_count': self.get_state('token_count'),
-            'messages': self.get_state('messages', [])
+            'messages': self.get_state('messages', []),
+            'token_counts': self.get_token_counts()
         }
 
     def update_conversation_state(self, updates: Dict[str, Any]) -> None:

@@ -1,5 +1,6 @@
 import streamlit as st
 import base64
+import logging
 from config.app_config import AppConfig
 from openai import models
 
@@ -31,31 +32,55 @@ class Sidebar:
         }
     }
 
-    def __init__(self, service_manager):
+    def __init__(self, service_manager, state_manager):
         self.service_manager = service_manager
+        self.state_manager = state_manager
         self.config = AppConfig()
 
-
     def render(self):
+        """Render the complete sidebar interface."""
+        """Render the complete sidebar interface."""
         with st.sidebar:
-            self._render_control_buttons()
-            self._render_file_upload()
-            self._render_conversation_section()
-            self._render_ai_service_section()
-            self._render_token_display()
+            try:
+                self._render_control_buttons()
+                self._render_file_upload()
+                self._render_conversation_section()
+                self._render_ai_service_section()
+                self._render_token_display()
+            except Exception as e:
+                st.error(f"Error rendering sidebar: {str(e)}")
+                logging.error(f"Sidebar render error: {str(e)}")
 
 
     def _render_control_buttons(self):
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("🔄 Reset Info"):
-                st.session_state.clear()
-                st.session_state.show_title_input = True
-                st.session_state.ai_service = "Claude"
-                st.rerun()
-        with col2:
-            if st.button("📜 Show Code"):
-                st.session_state.show_code_popup = not st.session_state.show_code_popup
+        """
+                Renders the control buttons with confirmation dialog in the sidebar.
+                Uses a sequential layout to avoid nested columns.
+                """
+        if not st.session_state.get('show_reset_confirm', False):
+            # Show initial buttons
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("🔄 Reset Input"):
+                    st.session_state.show_reset_confirm = True
+                    st.rerun()
+            with col2:
+                if st.button("📜 Show Code"):
+                    st.session_state.show_code_popup = not st.session_state.show_code_popup
+        else:
+            # Show confirmation dialog
+            st.warning("This will clear all conversations and uploaded files. Token information will be preserved.")
+            st.write("")  # Add some vertical spacing
+
+            # Place buttons using streamlit columns
+            left_col, right_col = st.columns([1, 1])
+            with left_col:
+                if st.button("✔️ Yes, Reset", key="confirm_reset", use_container_width=True):
+                    self._handle_reset_input()
+            with right_col:
+                if st.button("❌ Cancel", key="cancel_reset", use_container_width=True):
+                    st.session_state.show_reset_confirm = False
+                    st.rerun()
 
     def _render_file_upload(self):
         uploaded_files = st.file_uploader(
@@ -134,6 +159,11 @@ class Sidebar:
             if st.session_state.selected_conv:
                 self._render_ai_service_selection()
 
+    DALLE_SIZES = {
+        "1024x1024": "1024 x 1024",
+        "512x512": "512 x 512"
+    }
+
     def _render_ai_service_section(self):
         """Render AI service selection section."""
         st.divider()
@@ -209,7 +239,18 @@ class Sidebar:
             st.markdown(
                 formatted_description,
                 unsafe_allow_html=True
-        )
+            )
+
+        if selected_service == "dalle":
+            st.write("")  # Add spacing
+            selected_size = st.radio(
+                "Select Image Size",
+                list(self.DALLE_SIZES.keys()),
+                format_func=lambda x: self.DALLE_SIZES[x],
+                index=0
+            )
+            st.session_state.dalle_size = selected_size
+
     def _render_token_display(self):
         """Display token usage statistics for the current conversation.
          This method shows a detailed breakdown of token usage by different AI services
@@ -283,7 +324,6 @@ class Sidebar:
             st.error(f"Error processing files: {str(e)}")
 
 
-
     def _handle_paste_button(self):
         success, data, error_message = self.service_manager.chat_manager.get_clipboard_image()
         if success:
@@ -305,3 +345,55 @@ class Sidebar:
                 st.error(f"Error processing image: {str(e)}")
         else:
             st.error(error_message)
+
+    def _handle_reset_input(self):
+        """
+                Handles the reset functionality using both state_manager and service_manager.
+                This implementation properly preserves token information while clearing other state.
+                """
+        try:
+            # Store the current token information before reset
+            token_info = {
+                'claude': st.session_state.get('token_claude', 0),
+                'chatgpt': st.session_state.get('token_chatgpt', 0),
+                'dalle': st.session_state.get('token_dalle', 0),
+                'gemini': st.session_state.get('token_gemini', 0),
+                'input': st.session_state.get('token_input', 0),
+                'total': st.session_state.get('token_total', 0)
+            }
+
+            # Clear all non-essential session state
+            keys_to_preserve = {'initialized', 'show_reset_confirm'}
+            for key in list(st.session_state.keys()):
+                if key not in keys_to_preserve:
+                    del st.session_state[key]
+
+            # Restore default values
+            st.session_state.update({
+                'show_title_input': True,
+                'ai_service': 'claude',
+                'show_code_popup': False,
+                'messages': [],
+                'selected_conv': None,
+                'clipboard_image': None,
+                'analysis_results': [],
+                'model_key': None,
+                'theme': 'Pastel Delight',
+                'uploaded_files': []
+            })
+
+            # Restore token information
+            for service, count in token_info.items():
+                st.session_state[f'token_{service}'] = count
+
+            st.success("Reset completed successfully!")
+
+            # Set confirmation dialog state to False
+            st.session_state.show_reset_confirm = False
+
+            # Force UI update
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error during reset: {str(e)}")
+            logging.error(f"Reset error: {str(e)}")
