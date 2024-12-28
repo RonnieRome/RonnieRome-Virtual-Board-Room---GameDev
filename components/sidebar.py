@@ -1,6 +1,7 @@
 import streamlit as st
 import base64
 import logging
+import logger
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
 from datetime import datetime
@@ -354,17 +355,25 @@ class Sidebar:
         except Exception as e:
             st.error(f"Error processing files: {str(e)}")
 
-
     def _handle_paste_button(self):
-        success, data, error_message = self.service_manager.chat_manager.get_clipboard_image()
-        if success:
-            try:
+        """Handle pasting image from clipboard with proper error handling."""
+        try:
+            # Get clipboard image using chat manager
+            success, data, error_message = self.service_manager.chat_manager.get_clipboard_image()
+
+            if success and data:
+                # Encode image data
                 image_base64 = base64.b64encode(data).decode()
+
+                # Display image in chat
                 with st.chat_message("user"):
                     st.image(data, caption="Pasted from clipboard", use_container_width=True)
+
+                # Store in session state
                 st.session_state.clipboard_image = image_base64
+
+                # Add to conversation if one is selected
                 if st.session_state.selected_conv:
-                    # Changed from self.chat_manager to self.service_manager.chat_manager
                     self.service_manager.chat_manager.add_image_message(
                         st.session_state.selected_conv,
                         image_base64,
@@ -372,10 +381,15 @@ class Sidebar:
                         "user"
                     )
                     st.success("Image successfully pasted and added to conversation")
-            except Exception as e:
-                st.error(f"Error processing image: {str(e)}")
-        else:
-            st.error(error_message)
+                else:
+                    st.warning("Please select a conversation first to save the image")
+
+            else:
+                st.error(error_message or "Failed to get image from clipboard")
+
+        except Exception as e:
+            logger.error(f"Error in paste button handler: {str(e)}")
+            st.error(f"Error processing clipboard image: {str(e)}")
 
     def _handle_reset_input(self):
         """

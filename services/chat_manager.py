@@ -12,12 +12,13 @@ import streamlit as st
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Tuple, Any
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
+from services.file_manager import FileManager
 
 logger = logging.getLogger(__name__)
 
@@ -891,4 +892,50 @@ class ChatHistoryManager:
         else:
             return f"An error occurred with {service.upper()}. Please try again or switch to another AI service."
 
+    def get_clipboard_image(self) -> Tuple[bool, Optional[bytes], Optional[str]]:
+        """Get image from clipboard using FileManager."""
+        try:
+            # Create FileManager instance if not already created
+            if not hasattr(self, 'file_manager'):
+                self.file_manager = FileManager()
 
+            # Delegate clipboard handling to FileManager
+            return self.file_manager.get_clipboard_image()
+        except Exception as e:
+            logger.error(f"Error handling clipboard image: {str(e)}")
+            return False, None, f"Clipboard error: {str(e)}"
+
+    def add_image_message(self, conv_id: str, image_data: str, content: str, sender: str) -> None:
+        """Add an image message to the conversation.
+
+        Args:
+            conv_id (str): Conversation ID
+            image_data (str): Base64 encoded image data
+            content (str): Message content/caption
+            sender (str): Message sender
+        """
+        try:
+            # Get conversation
+            conversation = self.get_conversation(conv_id)
+            if not conversation:
+                raise ValueError(f"Conversation {conv_id} not found")
+
+            # Create message with image metadata
+            message = {
+                "content": content,
+                "sender": sender,
+                "timestamp": datetime.now().isoformat(),
+                "type": "image",
+                "image_data": image_data
+            }
+
+            # Add message to conversation
+            conversation["messages"].append(message)
+
+            # Save conversation
+            conv_path = self._get_conv_path(conv_id)
+            self._save_conversation(conv_path, conversation)
+
+        except Exception as e:
+            logger.error(f"Error adding image message: {str(e)}")
+            raise RuntimeError(f"Failed to add image message: {str(e)}")
