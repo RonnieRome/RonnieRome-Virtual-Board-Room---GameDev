@@ -99,10 +99,66 @@ class AppConfig:
         }
         return model_maps.get(service, {}).get(model_key, model_key)
 
-    @classmethod
+
+    IMAGE_FORMATS = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+    CODE_FORMATS = ["py", "js", "cs", "txt", "json", "html", "css", "java", "cpp", "rb"]
+    DOCUMENT_FORMATS = ["pdf", "doc", "docx", "rtf", "md", "txt"]
+    DATA_FORMATS = ["csv", "xlsx", "xls", "json", "xml"]
+    CONFIG_FORMATS = ["json", "yaml", "yml", "ini", "toml"]
+
     def get_supported_file_types(cls):
-        """Get list of all supported file types."""
-        return cls.IMAGE_FORMATS + cls.CODE_FORMATS
+        """
+        Get list of all supported file types.
+        Returns a unique list of file extensions to avoid duplicates.
+        """
+        all_formats = (
+            cls.IMAGE_FORMATS +
+            cls.CODE_FORMATS +
+            cls.DOCUMENT_FORMATS +
+            cls.DATA_FORMATS +
+            cls.CONFIG_FORMATS
+        )
+        cleaned_formats = [ext.lower().strip('.') for ext in all_formats]
+        return list(set(all_formats))
+
+    @classmethod
+    def get_file_category(cls, file_extension: str) -> str:
+        """
+        Determine the category of a file based on its extension.
+
+        Args:
+            file_extension (str): The file extension to check (with or without dot)
+
+        Returns:
+            str: Category of the file ('image', 'code', 'document', 'data', 'config', or 'unknown')
+        """
+        ext = file_extension.lower().strip('.')
+
+        if ext in cls.IMAGE_FORMATS:
+            return 'image'
+        elif ext in cls.CODE_FORMATS:
+            return 'code'
+        elif ext in cls.DOCUMENT_FORMATS:
+            return 'document'
+        elif ext in cls.DATA_FORMATS:
+            return 'data'
+        elif ext in cls.CONFIG_FORMATS:
+            return 'config'
+        return 'unknown'
+
+    @classmethod
+    def is_supported_file_type(cls, file_extension: str) -> bool:
+        """
+        Check if a file type is supported.
+
+        Args:
+            file_extension (str): The file extension to check (with or without dot)
+
+        Returns:
+            bool: True if the file type is supported, False otherwise
+        """
+        ext = file_extension.lower().strip('.')
+        return ext in cls.get_supported_file_types()
 
     @classmethod
     def validate_api_keys(cls):

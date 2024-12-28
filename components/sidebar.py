@@ -90,10 +90,16 @@ class Sidebar:
                     st.rerun()
 
     def _render_file_upload(self):
+        """Render file upload section with debug information for file types."""
+        # Debug: Print supported file types
+        supported_types = self.config.get_supported_file_types()
+        print(f"Supported file types: {supported_types}")  # Debug line
+
         uploaded_files = st.file_uploader(
             "Import Files",
-            type=self.config.get_supported_file_types(),
-            accept_multiple_files=True
+            type=supported_types,
+            accept_multiple_files=True,
+            help="Upload program files, documents, or data files"  # Added helpful tooltip
         )
 
         col1, col2 = st.columns([1, 1])

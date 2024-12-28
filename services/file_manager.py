@@ -21,42 +21,57 @@ class FileManager:
     def handle_file_upload(self, file, conv_id: str) -> Dict:
         """
         Process a single uploaded file and return its data.
-        Supports image, PDF, and text files with appropriate handling for each type.
+        Supports image, PDF, and text files.
         """
-        file_extension = file.name.split('.')[-1].lower() if '.' in file.name else ''
+        try:
+            # Get file extension and type
+            file_extension = file.name.split('.')[-1].lower() if '.' in file.name else ''
+            file_type = getattr(file, 'type', '')
 
-        if file.type.startswith('image'):
-            return self._process_image_file(file)
-        elif file_extension == 'pdf':
-            return self._process_pdf_file(file)
-        else:
-            return self._process_text_file(file)
+            # Handle different file types
+            if file_type.startswith('image'):
+                return self._process_image_file(file)
+            elif file_extension == 'pdf' or file_type == 'application/pdf':
+                return self._process_pdf_file(file)
+            else:
+                return self._process_text_file(file)
+
+        except Exception as e:
+            logger.error(f"Error processing file {file.name}: {str(e)}")
+            raise Exception(f"File processing error: {str(e)}")
 
     def _process_pdf_file(self, file) -> Dict:
         """
-        Extract and process content from PDF files.
-        Handles text extraction page by page and includes metadata when available.
+        Process PDF file and extract its content.
+        Includes metadata extraction and text content.
         """
         try:
+            # Read the PDF file into bytes
             pdf_bytes = io.BytesIO(file.read())
+
+            # Create PDF reader
             pdf_reader = PyPDF2.PdfReader(pdf_bytes)
+
+            # Extract text from all pages
             content = []
             total_pages = len(pdf_reader.pages)
 
-            # Extract text from each page
             for page_num in range(total_pages):
                 try:
                     page = pdf_reader.pages[page_num]
                     text = page.extract_text()
-                    if text.strip():
+
+                    if text.strip():  # Only add non-empty pages
                         content.append(f"[Page {page_num + 1}]\n{text}")
+
                 except Exception as e:
-                    logger.warning(f"Page {page_num + 1} extraction failed: {str(e)}")
-                    content.append(f"[Page {page_num + 1} - Extraction Error]")
+                    logger.warning(f"Error extracting text from page {page_num + 1}: {str(e)}")
+                    content.append(f"[Page {page_num + 1}] - Error extracting text")
 
             # Get PDF metadata
             metadata = pdf_reader.metadata or {}
 
+            # Create formatted response
             return {
                 'name': file.name,
                 'type': 'pdf',
@@ -64,13 +79,16 @@ class FileManager:
                 'metadata': {
                     'title': metadata.get('/Title', 'Untitled'),
                     'author': metadata.get('/Author', 'Unknown'),
-                    'pages': total_pages
+                    'pages': total_pages,
+                    'creation_date': metadata.get('/CreationDate', 'Unknown')
                 },
-                'language': 'pdf',
                 'stored_at': datetime.now().isoformat()
             }
+
         except Exception as e:
+            logger.error(f"Error processing PDF file {file.name}: {str(e)}")
             raise Exception(f"PDF processing error: {str(e)}")
+
 
     def handle_multiple_files(self, files: List, conv_id: str) -> List[Dict]:
         """Process multiple uploaded files and collect their data."""
