@@ -30,6 +30,9 @@ class ServiceManager:
             # Initialize core services first
             self._initialize_core_services()
 
+            # Initialize chat manager explicitly
+            self._initialize_chat_manager()
+
             # Initialize dependent services
             self._initialize_dependent_services()
 
@@ -40,6 +43,7 @@ class ServiceManager:
             if hasattr(self, 'logger'):
                 self.logger.error(f"ServiceManager initialization failed: {str(e)}", exc_info=True)
             self._handle_initialization_error(e)
+
 
     def _initialize_core_services(self):
         """Initialize core services that other services depend on."""
@@ -59,6 +63,37 @@ class ServiceManager:
         except Exception as e:
             self.logger.error(f"Core services initialization failed: {str(e)}")
             raise RuntimeError(f"Failed to initialize core services: {str(e)}")
+
+    def _initialize_chat_manager(self):
+        """Initialize chat manager with proper error handling."""
+        try:
+            from services.chat_manager import ChatHistoryManager
+            self.chat_manager = ChatHistoryManager()
+            self.logger.debug("Chat manager initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Chat manager initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize chat manager: {str(e)}")
+
+    def _initialize_dependent_services(self):
+        """Initialize services that depend on core services."""
+        try:
+            # Initialize file-related services
+            self.file_manager = FileManager()
+            self.file_analyzer = FileAnalyzer()
+            self.document_manager = DocumentManager()
+
+            # Initialize context manager
+            self.context_manager = ContextManager()
+
+            # Initialize style manager
+            self.style_manager = AIStyleManager()
+
+            self.logger.debug("Dependent services initialized successfully")
+
+        except Exception as e:
+            self.logger.error(f"Dependent services initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize dependent services: {str(e)}")
+
 
     def _handle_initialization_error(self, error: Exception):
         """Handle initialization errors with proper logging and user feedback."""

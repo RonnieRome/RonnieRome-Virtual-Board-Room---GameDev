@@ -24,29 +24,30 @@ class AsyncAppRunner:
     """
 
     def __init__(self):
+        """Initialize the app runner with necessary state tracking."""
         self.app_manager: Optional[AppManager] = None
         self.start_time = datetime.now()
         self.analysis_initialized = False
-        load_dotenv()
+        load_dotenv()  # Load environment variables
 
     async def initialize_app(self) -> None:
         """
-        Initializes the application asynchronously, handling any startup tasks
-        that need to be performed before the main application runs.
+        Initializes the application asynchronously, handling startup tasks
+        in the correct order while maintaining proper error handling.
         """
         try:
             logger.info("Starting application initialization")
 
-            # Load frontend dependencies first
+            # Step 1: Load frontend dependencies
             load_frontend_dependencies()
 
-            # Initialize the app manager
+            # Step 2: Initialize the app manager
             self.app_manager = AppManager()
 
-            # Initialize core application components
-            self.app_manager.initialize_app()
+            # Step 3: Initialize core components
+            await self._initialize_core_components()
 
-            # Handle any pending analysis tasks
+            # Step 4: Handle any pending analysis tasks
             await self._handle_pending_analysis()
 
             logger.info("Application initialization completed successfully")
@@ -57,11 +58,24 @@ class AsyncAppRunner:
             self._handle_critical_error(e)
             raise
 
+
+    async def _initialize_core_components(self) -> None:
+        """Initialize core components while maintaining proper state."""
+        try:
+            if not hasattr(st.session_state, 'initialized'):
+                self._initialize_analysis_state()
+                st.session_state.initialized = True
+
+            # Initialize remaining app components if manager exists
+            if self.app_manager:
+                self.app_manager.initialize_core_components()
+
+        except Exception as e:
+            logger.error("Failed to initialize core components", exc_info=True)
+            raise
+
     def _initialize_analysis_state(self):
-        """
-        Initializes analysis-specific state variables in the session state.
-        This ensures all necessary state variables are available for the analysis panel.
-        """
+        """Setup initial analysis panel state in session."""
         if 'analysis_panel_state' not in st.session_state:
             st.session_state.analysis_panel_state = {
                 'visible': False,
@@ -72,15 +86,12 @@ class AsyncAppRunner:
             }
 
     async def _handle_pending_analysis(self) -> None:
-        """
-        Handles any pending file analysis tasks that were queued during the
-        application startup or previous session.
-        """
+        """Process any pending file analysis tasks from previous sessions."""
         try:
             if st.session_state.get('pending_analysis'):
                 logger.info("Processing pending analysis tasks")
 
-                # Update UI state to show loading
+                # Update UI to show loading state
                 self._update_analysis_state(loading=True)
 
                 conv_id = st.session_state.get('selected_conv')
@@ -96,7 +107,7 @@ class AsyncAppRunner:
                         results=analysis_results
                     )
 
-                # Clear pending flags
+                # Clean up pending state
                 st.session_state.pending_analysis = False
                 st.session_state.pending_files = []
 
@@ -105,12 +116,10 @@ class AsyncAppRunner:
             self._handle_analysis_error(e)
             self._update_analysis_state(loading=False, error=str(e))
 
-    def _update_analysis_state(self, loading: bool = False, results: Optional[Dict] = None,
-                               error: Optional[str] = None):
-        """
-        Updates the analysis panel state in a coordinated manner.
-        This ensures consistent state management across the application.
-        """
+    def _update_analysis_state(self, loading: bool = False,
+                             results: Optional[Dict] = None,
+                             error: Optional[str] = None):
+        """Update analysis panel state with new values."""
         if 'analysis_panel_state' not in st.session_state:
             self._initialize_analysis_state()
 
@@ -122,26 +131,14 @@ class AsyncAppRunner:
         if results is not None:
             st.session_state.analysis_panel_state['analysis_results'] = results
 
+
     def render_application(self) -> None:
-        """
-        Enhanced render method that coordinates main UI and analysis panel rendering.
-        This ensures proper layout and state management between components.
-        """
+        """Render the main application interface with proper error handling."""
         try:
-            if not self.app_manager:
+            if self.app_manager:
+                self.app_manager.render()
+            else:
                 raise RuntimeError("Application manager not properly initialized")
-
-            # Create two-column layout
-            main_col, analysis_col = st.columns([7, 3])
-
-            with main_col:
-                # Render main application content
-                self.app_manager.render_main_content()
-
-            with analysis_col:
-                # Render analysis panel if initialized
-                if self.analysis_initialized:
-                    self._render_analysis_panel()
 
         except Exception as e:
             logger.error("Error rendering application", exc_info=True)
@@ -165,78 +162,37 @@ class AsyncAppRunner:
             results = panel_state['analysis_results']
             self.app_manager.analysis_panel.render_results(results)
 
-    def _handle_analysis_error(self, error: Exception) -> None:
-        """
-        Enhanced error handler specifically for analysis-related errors.
-        This method coordinates error handling between the backend and UI.
-        """
-        error_message = f"Analysis error: {str(error)}"
-        logger.error(error_message, exc_info=True)
-
-        # Update both session state and analysis panel state
-        st.session_state.analysis_error = error_message
-        self._update_analysis_state(error=error_message)
-
-        # Show warning in UI
-        st.warning(
-            "An error occurred during file analysis. "
-            "Some features may be limited. Please try again or contact support."
-        )
-
     def _handle_critical_error(self, error: Exception) -> None:
-        """
-        Handles critical application errors that occur during initialization
-        or runtime. Ensures proper logging and user notification.
-        """
+        """Handle critical application errors with proper user notification."""
         error_message = f"Critical application error: {str(error)}"
         logger.error(error_message, exc_info=True)
 
-        # Update session state for error display
+        # Update session state for error tracking
         st.session_state.critical_error = error_message
 
-        # Display error to user
+        # Show user-friendly error message
         st.error(
             "An unexpected error occurred during application startup. "
             "Please try refreshing the page or contact support."
         )
 
     def _handle_analysis_error(self, error: Exception) -> None:
-        """
-        Handles errors that occur during file analysis operations.
-        Ensures proper error logging and user notification while allowing
-        the application to continue running.
-        """
+        """Handle analysis-specific errors while maintaining application stability."""
         error_message = f"Analysis error: {str(error)}"
         logger.error(error_message, exc_info=True)
 
-        # Update session state for error tracking
+        # Update error states
         st.session_state.analysis_error = error_message
 
-        # Notify user but allow application to continue
+        # Show warning that allows application to continue
         st.warning(
             "An error occurred during file analysis. "
             "Some features may be limited. Please try again or contact support."
         )
 
-    def render_application(self) -> None:
-        """
-        Renders the main application interface and handles any runtime
-        UI-related tasks.
-        """
-        try:
-            if self.app_manager:
-                self.app_manager.render()
-            else:
-                raise RuntimeError("Application manager not properly initialized")
-
-        except Exception as e:
-            logger.error("Error rendering application", exc_info=True)
-            self._handle_critical_error(e)
-
-
 async def main() -> None:
     """
-    Main application entry point with enhanced async support and error handling.
+    Main application entry point with comprehensive async support and error handling.
     This function coordinates the entire application lifecycle.
     """
     runner = AsyncAppRunner()
@@ -253,12 +209,7 @@ async def main() -> None:
         logger.info(f"Application started successfully in {startup_time:.2f} seconds")
 
     except Exception as e:
-        logger.error("Application failed to start", exc_info=True)
-        st.error(
-            "Failed to start the application. Please refresh the page or contact support. "
-            f"Error: {str(e)}"
-        )
-
+        logger.error("Unhandled exception in the main function.", exc_info=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

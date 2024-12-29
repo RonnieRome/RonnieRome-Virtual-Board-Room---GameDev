@@ -22,24 +22,57 @@ logger = logging.getLogger(__name__)
 class AppManager:
     def __init__(self):
         """Initialize the application with enhanced error handling and state management."""
+        # Initialize error states first
+        self.error_states = {
+            'initialization_complete': False,
+            'last_error': None,
+            'error_count': 0
+        }
+
         try:
+            # Set up logging
+            logging.basicConfig(level=logging.INFO)
+            self.logger = logging.getLogger(__name__)
+
             # Initialize core configuration
             self.config = AppConfig()
+
+            # Initialize components in order
             self._initialize_services()
             self._initialize_managers()
             self._initialize_ui_components()
 
-            # Set up error tracking
-            self.error_states = {
-                'initialization_complete': False,
-                'last_error': None,
-                'error_count': 0
-            }
-
+            # Mark initialization as complete
+            self.error_states['initialization_complete'] = True
             logger.info("AppManager initialization completed successfully")
 
         except Exception as e:
             logger.error(f"Critical initialization error: {str(e)}", exc_info=True)
+            self._handle_initialization_error(e)
+            raise
+
+    def initialize_core_components(self) -> None:
+        """Initialize core components without page configuration."""
+        try:
+            # Initialize session state if needed
+            if not hasattr(st.session_state, 'initialized'):
+                self._initialize_session_state()
+                st.session_state.initialized = True
+
+            # Apply theme settings
+            current_theme = st.session_state.get('theme', 'Transparent')
+            current_background = st.session_state.get('background', 'Transparent')
+
+            self.theme_manager.apply_theme(
+                theme_choice=current_theme,
+                background_choice=current_background
+            )
+
+            # Mark initialization as complete
+            self.error_states['initialization_complete'] = True
+            logger.debug("Core components initialization completed successfully")
+
+        except Exception as e:
             self._handle_initialization_error(e)
             raise
 
@@ -49,9 +82,10 @@ class AppManager:
             # Initialize ServiceManager first as other components depend on it
             self.service_manager = ServiceManager()
 
-            # Validate critical services
+            # Initialize chat manager if not present
             if not hasattr(self.service_manager, 'chat_manager'):
-                raise RuntimeError("ChatManager not properly initialized")
+                from services.chat_manager import ChatHistoryManager
+                self.service_manager.chat_manager = ChatHistoryManager()
 
             # Initialize AI Analysis with retry capability
             self.ai_manager = AIAnalysisManager(self.service_manager)
@@ -96,24 +130,6 @@ class AppManager:
             logger.error(f"UI component initialization error: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to initialize UI components: {str(e)}")
 
-    def _initialize_ui_components(self):
-        """Initialize UI components with proper error handling."""
-        try:
-            # Initialize UI components with required dependencies
-            self.sidebar = Sidebar(self.service_manager, self.state_manager)
-            self.chat_area = ChatArea(self.service_manager, self.theme_manager)
-
-            # Initialize analysis panel with enhanced capabilities
-            self.analysis_panel = AnalysisPanel(
-                state_manager=self.state_manager,
-                ai_manager=self.ai_manager
-            )
-
-            logger.info("UI components initialized successfully")
-
-        except Exception as e:
-            logger.error(f"UI component initialization error: {str(e)}", exc_info=True)
-            raise RuntimeError(f"Failed to initialize UI components: {str(e)}")
 
     async def handle_file_analysis(self, conv_id: str, files: List[Dict]) -> Dict:
         """Handle file analysis with comprehensive error handling and retry logic."""
