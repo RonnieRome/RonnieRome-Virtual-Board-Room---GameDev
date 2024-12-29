@@ -5,15 +5,15 @@ import base64
 from config.styles import StyleConfig
 
 class ThemeManager:
-    def __init__(self):
-        self.style_config = StyleConfig
+    def __init__(self, style_config):
+        """Initialize ThemeManager with style config."""
+        self.style_config = style_config
         self.background_dir = Path("backgrounds")
         self.background_dir.mkdir(exist_ok=True)
 
-    def apply_theme(self, theme_choice: str,
-                    background_choice: Optional[str] = None) -> None:
+    def apply_theme(self, theme_choice: str, background_choice: Optional[str] = None) -> None:
         """Apply selected theme and background."""
-        # Apply theme CSS
+        # Use the class methods from StyleConfig
         theme_css = self.style_config.get_theme_css(theme_choice)
         st.markdown(theme_css, unsafe_allow_html=True)
 
@@ -22,20 +22,26 @@ class ThemeManager:
         st.markdown(font_style, unsafe_allow_html=True)
 
         # Apply background if selected
-        if background_choice and background_choice != "None":
+        if background_choice and background_choice != "Transparent":
             self.apply_background(background_choice)
 
     def apply_background(self, background_name: str) -> None:
         """Apply selected background image."""
         try:
+            # Skip applying background if "Transparent" is selected
+            if background_name == "Transparent":
+                return  # Skip further processing
+
             bg_path = self.background_dir / background_name
             if not bg_path.exists():
-                return
+                return  # Exit if background file doesn't exist
 
+            # Convert background image to base64 and apply it
             bg_base64 = self._get_base64_image(bg_path)
             self._apply_background_css(bg_base64)
 
         except Exception as e:
+            # Fallback to default background in case of an error
             print(f"Error applying background: {str(e)}")
             self._apply_default_background()
 
@@ -59,8 +65,8 @@ class ThemeManager:
     def get_current_theme(self) -> Dict[str, str]:
         """Get current theme settings."""
         return {
-            'theme': st.session_state.get('theme', 'None'),
-            'background': st.session_state.get('background', 'None')
+            'theme': st.session_state.get('theme', 'Transparent'),
+            'background': st.session_state.get('background', 'Transparent')
         }
 
     def _get_base64_image(self, image_path: Path) -> str:
@@ -110,7 +116,7 @@ class ThemeManager:
                         custom_styles: Dict[str, str]) -> None:
         """Apply custom styles to an existing theme."""
         base_theme = self.style_config.THEMES.get(theme_name,
-                                                  self.style_config.THEMES['None'])
+                                                  self.style_config.THEMES['Transparent'])
 
         custom_css = []
         for selector, styles in custom_styles.items():

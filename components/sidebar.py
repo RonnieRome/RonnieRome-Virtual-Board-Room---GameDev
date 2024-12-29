@@ -423,7 +423,7 @@ class Sidebar:
                 'clipboard_image': None,
                 'analysis_results': [],
                 'model_key': None,
-                'theme': 'Pastel Delight',
+                'theme': 'Transparent',
                 'uploaded_files': []
             })
 

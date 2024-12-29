@@ -1,143 +1,255 @@
 import logging
 import os
 import streamlit as st
-
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from config.app_config import AppConfig
+from config.styles import StyleConfig
 from config.ai_style_manager import AIStyleManager
-from services.chat_manager import ChatHistoryManager  # Updated import
+from services.chat_manager import ChatHistoryManager
 from services.logging_service import LoggingService
-from services.context_manager import ContextManager  # Updated import path
+from services.context_manager import ContextManager
 from components.error_handler import ErrorHandler
+from components.file_analyzer import FileAnalyzer
 from services.document_manager import DocumentManager
 from services.file_manager import FileManager
 
-
-# Set up debug logging
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
 class ServiceManager:
+    """Enhanced ServiceManager with async support and improved error handling."""
+
     def __init__(self):
-        """Initialize all services needed by the application."""
+        """Initialize services with proper dependency management."""
+        # Initialize logger first before any other operations
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+
         try:
-            logger.debug("Initializing AppConfig")
-            self.config = AppConfig()
+            # Initialize core services first
+            self._initialize_core_services()
 
-            logger.debug("Initializing LoggingService")
-            self.logging_service = LoggingService()
+            # Initialize dependent services
+            self._initialize_dependent_services()
 
-            logger.debug("Initializing ErrorHandler")
-            self.error_handler = ErrorHandler(self.logging_service)
-
-            logger.debug("Initializing FileManager")
-            self.file_manager = FileManager()
-
-            logger.debug("Initializing ContextManager")
-            self.context_manager = ContextManager()
-
-            logger.debug("Initializing ChatHistoryManager")
-            self.chat_manager = ChatHistoryManager()
-
-            logger.debug("Initializing AIStyleManager")
-            self.style_manager = AIStyleManager()
-
-            logger.debug("ServiceManager initialization completed successfully")
-            self.logging_service.log_app_event('service_manager_init', {
-                'status': 'completed',
-                'services': [
-                    'logging_service',
-                    'error_handler',
-                    'file_manager',
-                    'context_manager',
-                    'chat_manager',
-                    'style_manager'
-                ]
-            })
+            # Log successful initialization
+            self._log_initialization_success()
 
         except Exception as e:
-            logger.error(f"Error during ServiceManager initialization: {str(e)}", exc_info=True)
-            raise
+            if hasattr(self, 'logger'):
+                self.logger.error(f"ServiceManager initialization failed: {str(e)}", exc_info=True)
+            self._handle_initialization_error(e)
 
-    def handle_file_upload(self, files: list, conv_id: str) -> List[Dict]:
-        """Process uploaded files and store them in the conversation.
+    def _initialize_core_services(self):
+        """Initialize core services that other services depend on."""
+        try:
+            # Initialize configuration and logging first
+            self.config = AppConfig()
+            self.logging_service = LoggingService()
 
-        This method handles the complete file upload process, from receiving the files
-        to storing them in the conversation context. It processes both single and
-        multiple files, ensuring proper error handling and logging throughout.
+            # Initialize error handler with logging service
+            self.error_handler = ErrorHandler(self.logging_service)
 
-        Args:
-            files: A list of uploaded file objects
-            conv_id: The unique identifier for the conversation
+            # Initialize style configuration
+            self.style_config = StyleConfig()
 
-        Returns:
-            A list of dictionaries containing the processed file information
-        """
-        logger.debug(f"Starting file upload process for conversation {conv_id}")
-        logger.debug(f"Received {len(files)} files")
+            self.logger.debug("Core services initialized successfully")
+
+        except Exception as e:
+            self.logger.error(f"Core services initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize core services: {str(e)}")
+
+    def _handle_initialization_error(self, error: Exception):
+        """Handle initialization errors with proper logging and user feedback."""
+        error_message = f"ServiceManager initialization failed: {str(error)}"
+
+        # Log directly since we might not have logging service
+        if hasattr(self, 'logger'):
+            self.logger.error(error_message)
+
+        # Display error to user through streamlit
+        st.error(error_message)
+
+        raise RuntimeError(error_message)
+
+    async def handle_file_upload(self, files: list, conv_id: str) -> List[Dict]:
+        """Enhanced async file upload handler with better error handling."""
+        logger.debug(f"Starting async file upload for conversation {conv_id}")
 
         processed_files = []
+        upload_metrics = {
+            'start_time': datetime.now(),
+            'total_files': len(files),
+            'processed': 0,
+            'successful': 0,
+            'failed': 0
+        }
 
         try:
-            # Process each file individually
             for file in files:
                 try:
-                    logger.debug(f"Processing file: {getattr(file, 'name', 'unnamed')} for conversation: {conv_id}")
+                    # Process each file asynchronously
+                    file_data = await self._process_single_file(file, conv_id)
 
-                    # Process the individual file using FileManager
-                    file_data = self.file_manager.handle_file_upload(file, conv_id)
-
-                    # Store successful file data in chat history
                     if file_data and 'error' not in file_data:
-                        self.chat_manager.add_file_to_conversation(conv_id, file_data)
+                        # Analyze file asynchronously
+                        analysis_results = await self._analyze_file(file_data)
+                        file_data['analysis'] = analysis_results
+
+                        # Update conversation
+                        await self.chat_manager.add_file_to_conversation(conv_id, file_data)
+
+                        upload_metrics['successful'] += 1
+                    else:
+                        upload_metrics['failed'] += 1
 
                     processed_files.append(file_data)
+                    upload_metrics['processed'] += 1
 
-                except Exception as e:
-                    error_msg = f"Error processing file: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
-                    processed_files.append({
-                        'name': getattr(file, 'name', 'unnamed'),
-                        'type': 'error',
-                        'error': error_msg,
-                        'processed_at': datetime.now().isoformat()
-                    })
+                except Exception as file_error:
+                    logger.error(f"Error processing file: {str(file_error)}", exc_info=True)
+                    processed_files.append(self._create_error_file_data(file, str(file_error)))
+                    upload_metrics['failed'] += 1
 
-            # Log the overall processing results
-            successful_files = len([f for f in processed_files if f and 'error' not in f])
-            self.logging_service.log_app_event('file_upload_complete', {
-                'conversation_id': conv_id,
-                'metrics': {
-                    'total_files': len(files),
-                    'processed_files': len(processed_files),
-                    'successful_files': successful_files,
-                    'failed_files': [
-                        {
-                            'file_name': f.get('name', 'unnamed'),
-                            'error': f.get('error', 'Unknown error')
-                        }
-                        for f in processed_files if f and 'error' in f
-                    ]
-                }
-            })
+            # Analyze relationships for multiple files
+            if len(processed_files) > 1:
+                await self._analyze_file_relationships(processed_files, conv_id)
 
+            self._log_upload_metrics(upload_metrics)
             return processed_files
 
         except Exception as e:
-            error_msg = f"Error in handle_file_upload: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            self.error_handler.handle_error(
-                error=e,
-                error_type='file_upload',
-                context={
-                    'operation': 'file_upload',
-                    'conversation_id': conv_id
-                },
-                show_message=True
-            )
+            logger.error(f"Error in handle_file_upload: {str(e)}", exc_info=True)
+            self._handle_upload_error(e, conv_id)
             return []
+
+    async def _process_single_file(self, file: Any, conv_id: str) -> Dict:
+        """Process a single file asynchronously."""
+        try:
+            file_name = getattr(file, 'name', 'unnamed') if not isinstance(file, dict) else file.get('name', 'unnamed')
+            logger.debug(f"Processing file: {file_name}")
+
+            # Process file using FileManager
+            return await self.file_manager.handle_file_upload_async(file, conv_id)
+
+        except Exception as e:
+            logger.error(f"Error processing file {file_name}: {str(e)}", exc_info=True)
+            return self._create_error_file_data(file, str(e))
+
+    async def _analyze_file(self, file_data: Dict) -> Dict:
+        """Analyze a single file asynchronously."""
+        try:
+            analysis_results = await self.file_analyzer.analyze_single_file_async(file_data)
+            return {
+                'metadata': analysis_results.metadata,
+                'summary': analysis_results.summary,
+                'dependencies': analysis_results.dependencies,
+                'sections': analysis_results.sections
+            }
+        except Exception as e:
+            logger.error(f"File analysis error: {str(e)}", exc_info=True)
+            return {
+                'metadata': {},
+                'summary': f"Analysis failed: {str(e)}",
+                'dependencies': [],
+                'sections': []
+            }
+
+    async def _analyze_file_relationships(self, files: List[Dict], conv_id: str):
+        """Analyze relationships between files asynchronously."""
+        try:
+            valid_files = [f for f in files if 'error' not in f]
+            if valid_files:
+                analysis_results = await self.file_analyzer.analyze_file_batch_async(valid_files)
+                await self.context_manager.update_context_async(conv_id, {
+                    'file_analysis': self.file_analyzer.get_ai_context()
+                })
+                return analysis_results
+        except Exception as e:
+            logger.error(f"Error analyzing file relationships: {str(e)}", exc_info=True)
+            return None
+
+    def _create_error_file_data(self, file: Any, error_message: str) -> Dict:
+        """Create error data structure for failed file processing."""
+        return {
+            'name': getattr(file, 'name', 'unnamed') if not isinstance(file, dict) else file.get('name', 'unnamed'),
+            'type': 'error',
+            'error': error_message,
+            'processed_at': datetime.now().isoformat()
+        }
+
+    def _log_upload_metrics(self, metrics: Dict):
+        """Log file upload metrics."""
+        duration = (datetime.now() - metrics['start_time']).total_seconds()
+        logger.info(
+            f"File upload completed: {metrics['successful']}/{metrics['total_files']} "
+            f"files successful in {duration:.2f} seconds"
+        )
+        self.logging_service.log_app_event('file_upload_metrics', metrics)
+
+    def _handle_upload_error(self, error: Exception, conv_id: str):
+        """Handle file upload errors properly."""
+        self.error_handler.handle_error(
+            error=error,
+            error_type='file_upload',
+            context={
+                'operation': 'file_upload',
+                'conversation_id': conv_id
+            },
+            show_message=True
+        )
+
+    def _log_initialization_success(self):
+        """Log successful initialization details."""
+        try:
+            if hasattr(self, 'logging_service'):
+                self.logging_service.log_app_event('service_manager_init', {
+                    'status': 'completed',
+                    'initialized_services': [
+                        'logging_service',
+                        'error_handler',
+                        'file_manager',
+                        'file_analyzer',
+                        'context_manager',
+                        'chat_manager',
+                        'style_manager'
+                    ]
+                })
+            self.logger.info("ServiceManager initialization completed successfully")
+
+        except Exception as e:
+            self.logger.error(f"Failed to log initialization success: {str(e)}")
+
+    def _handle_initialization_error(self, error: Exception):
+        """Handle initialization errors with proper logging and user feedback."""
+        try:
+            error_message = f"ServiceManager initialization failed: {str(error)}"
+
+            # Log the error
+            if hasattr(self, 'logging_service'):
+                self.logging_service.log_error('service_manager_init', str(error))
+
+            # Handle the error through error handler if available
+            if hasattr(self, 'error_handler'):
+                self.error_handler.handle_error(
+                    error=error,
+                    error_type='initialization',
+                    context={'component': 'ServiceManager'},
+                    show_message=True
+                )
+
+            # If we don't have logging or error handling services, log directly
+            else:
+                self.logger.error(error_message)
+
+            # Display error to user
+            st.error(error_message)
+
+        except Exception as e:
+            # Fallback error handling if error handler itself fails
+            self.logger.error(f"Error handler failed: {str(e)}")
+            st.error("Critical initialization error occurred. Please check logs.")
 
     def handle_ai_request(
             self,
