@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageGrab
 from io import BytesIO
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional, Union, Any
 from config.app_config import AppConfig
 
 # Set up logging
@@ -21,9 +21,15 @@ class FileManager:
     def handle_file_upload(self, file, conv_id: str) -> Dict:
         """
         Process a single uploaded file and return its data.
-        Supports image, PDF, and text files.
+        Supports both file objects and dictionary inputs.
         """
         try:
+            # Handle case where file is already a processed dictionary
+            if isinstance(file, dict):
+                if 'type' in file and 'content' in file:
+                    return file
+                raise ValueError("Invalid file dictionary format")
+
             # Get file extension and type
             file_extension = file.name.split('.')[-1].lower() if '.' in file.name else ''
             file_type = getattr(file, 'type', '')
@@ -37,8 +43,14 @@ class FileManager:
                 return self._process_text_file(file)
 
         except Exception as e:
-            logger.error(f"Error processing file {file.name}: {str(e)}")
-            raise Exception(f"File processing error: {str(e)}")
+            error_msg = f"Error processing file {getattr(file, 'name', 'unknown')}: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'name': getattr(file, 'name', 'unknown'),
+                'type': 'error',
+                'error': str(e),
+                'stored_at': datetime.now().isoformat()
+            }
 
     def _process_pdf_file(self, file) -> Dict:
         """
@@ -90,7 +102,7 @@ class FileManager:
             raise Exception(f"PDF processing error: {str(e)}")
 
 
-    def handle_multiple_files(self, files: List, conv_id: str) -> List[Dict]:
+    def handle_multiple_files(self, files: List[Union[Dict, Any]], conv_id: str) -> List[Dict]:
         """Process multiple uploaded files and collect their data."""
         stored_files = []
         for file in files:
@@ -98,8 +110,13 @@ class FileManager:
                 file_data = self.handle_file_upload(file, conv_id)
                 stored_files.append(file_data)
             except Exception as e:
-                logger.error(f"File processing error - {file.name}: {str(e)}")
-                continue
+                logger.error(f"File processing error: {str(e)}")
+                stored_files.append({
+                    'name': getattr(file, 'name', 'unknown'),
+                    'type': 'error',
+                    'error': str(e),
+                    'stored_at': datetime.now().isoformat()
+                })
         return stored_files
 
     def _process_image_file(self, file) -> Dict:

@@ -1,68 +1,65 @@
 import streamlit as st
 import base64
-import asyncio
+
 
 from datetime import datetime
 from config.app_config import AppConfig
+from config.styles import StyleConfig
 
 class ChatArea:
-    def __init__(self, service_manager):
-        """Initialize the ChatArea component.
-
-        Args:
-            service_manager: The service manager instance providing access to all services
-        """
+    def __init__(self, service_manager, theme_manager):
         self.service_manager = service_manager
-        self.config = AppConfig()
-        self.theme_styles = {
-            "Pastel Delight": {
-                "background": "#fffaf0",
-                "text": "#5c5c5c",
-                "hover": "#f8efd4"
-            },
-            "Dreamy Sky": {
-                "background": "#dbe4f3",
-                "text": "#3c3c54",
-                "hover": "#c5d2eb"
-            },
-            "Peach Blossom": {
-                "background": "#fee4d1",
-                "text": "#4a332e",
-                "hover": "#fcd3bb"
-            },
-            "None": {
-                "background": "#ffffff",
-                "text": "#000000",
-                "hover": "#eaeaea"
-            }
-        }
+        self.theme_manager = theme_manager
+        self.style_config = theme_manager.style_config
+
         self.image_handler = self.service_manager.chat_manager.image_handler
 
-    def render(self):
-        """Main render method for the chat area"""
-        theme = st.session_state.get("theme", "None")
-        styles = self.theme_styles.get(theme, self.theme_styles["None"])
-        st.markdown(
-            f"""
-            <style>
-                .css-container {{
-                    background-color: {styles['background']};
-                    color: {styles['text']};
-                }}
-                .css-container .chat-message:hover {{
-                    background-color: {styles['hover']};
-                }}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.container()
-        st.title("HappyRonnieRome Virtual Board Room - myERP")
+
+    def render(self, theme_css: str = None):
+        """Render the chat area with the provided theme."""
+        try:
+            # Apply theme CSS if provided
+            if theme_css:
+                st.markdown(theme_css, unsafe_allow_html=True)
+            else:
+                # Get current theme from session state
+                theme = st.session_state.get('theme', 'Transparent')
+                styles = self.style_config.get_theme_css(theme)
+                st.markdown(styles, unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error loading theme styles: {str(e)}")
+
+        st.title("HappyRonnieRome Virtual Board Room - GameDev")
 
         # Add theme and background selection
         col1, col2 = st.columns(2)
         with col1:
-            self._render_theme_selector()
+            try:
+                available_themes = list(self.style_config.THEMES.keys())
+                current_theme = st.session_state.get('theme', 'Transparent')
+
+                if current_theme not in available_themes:
+                    current_theme = 'Transparent'
+                    st.session_state.theme = current_theme
+
+                selected_theme = st.selectbox(
+                    "Select Theme",
+                    options=available_themes,
+                    index=available_themes.index(current_theme),
+                    key="theme_selector"
+                )
+
+                if selected_theme != current_theme:
+                    st.session_state.theme = selected_theme
+                    theme_css = self.style_config.get_theme_css(selected_theme)
+                    st.markdown(theme_css, unsafe_allow_html=True)
+
+            except Exception as e:
+                st.error(f"Error in theme selection: {str(e)}")
+                st.session_state.theme = 'Transparent'
+                theme_css = self.style_config.get_theme_css('Transparent')
+                st.markdown(theme_css, unsafe_allow_html=True)
         with col2:
             self._render_background_selector()
 
@@ -217,27 +214,40 @@ class ChatArea:
             st.markdown(msg['content'])
 
     def _render_theme_selector(self):
-        """Render theme selection dropdown"""
-        themes = {
-                "Pastel Delight": "Pastel Delight",
-                "Peach Blossom": "Peach Blossom",
-                "Dreamy Sky": "Dreamy Sky",
-                "None": "None"
-        }
+        """Render the theme selection dropdown with proper error handling."""
+        try:
+            # Get available themes directly from StyleConfig
+            available_themes = list(self.style_config.THEMES.keys())
 
-        selected_theme = st.selectbox(
-            "Theme",
-            list(themes.keys()),
-            format_func=lambda x: themes[x],
-            index=list(themes.keys()).index(st.session_state.get('theme', 'Pastel Delight'))
-        )
+            # Get current theme from session state, defaulting to 'Transparent' if not set
+            current_theme = st.session_state.get('theme', 'Transparent')
 
-        if selected_theme != st.session_state.get('theme'):
-            st.session_state.theme = selected_theme
-            st.success(f"Theme changed to {selected_theme}")
-            st.rerun()
+            # Validate current_theme exists in available_themes
+            if current_theme not in available_themes:
+                current_theme = 'Transparent'
+                st.session_state.theme = current_theme
 
-        """Render theme selection dropdown with dynamic styles"""
+            # Create the theme selector
+            selected_theme = st.selectbox(
+                "Select Theme",
+                options=available_themes,
+                index=available_themes.index(current_theme)
+            )
+
+            # Update theme if changed
+            if selected_theme != current_theme:
+                st.session_state.theme = selected_theme
+                # Apply new theme
+                theme_css = self.style_config.get_theme_css(selected_theme)
+                st.markdown(theme_css, unsafe_allow_html=True)
+
+        except Exception as e:
+            # Fallback to Transparent theme if any error occurs
+            st.error(f"Error in theme selection: {str(e)}")
+            st.session_state.theme = 'Transparent'
+            theme_css = self.style_config.get_theme_css('Transparent')
+            st.markdown(theme_css, unsafe_allow_html=True)
+
     def _render_background_selector(self):
         """Render background selection dropdown"""
         backgrounds = {

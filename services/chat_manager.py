@@ -8,6 +8,7 @@ import uuid
 import requests
 import logging
 import mimetypes
+import asyncio
 import streamlit as st
 
 from datetime import datetime
@@ -19,8 +20,45 @@ from dataclasses import dataclass
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
 from services.file_manager import FileManager
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class ChatResponse:
+    """Structured response from chat processing."""
+    content: str
+    service_type: str
+    model: str
+    tokens: int
+    timestamp: str
+    metadata: Optional[Dict] = None
+
+@dataclass
+class PendingAnalysis:
+    """Represents a pending file analysis request."""
+    conversation_id: str
+    files: List[Dict]
+    queued_at: datetime
+    priority: int = 0
+
+@dataclass
+class AsyncChatResponse:
+    """Structured response for async chat operations."""
+    content: str
+    service_type: str
+    model: str
+    tokens: int
+    timestamp: str
+    metadata: Optional[Dict] = None
+
+@dataclass
+class AsyncPendingAnalysis:
+    """Represents a pending file analysis request."""
+    conversation_id: str
+    files: List[Dict]
+    queued_at: datetime
+    priority: int = 0
 
 class ImageHandler:
     def __init__(self, storage_type="local"):
@@ -65,25 +103,100 @@ class FileProcessResult:
 
 class ChatHistoryManager:
     def __init__(self):
-        self.conversations: Dict = {}
-        logger.debug("ChatHistoryManager initialized")
+        """Initialize the chat history manager with proper component initialization."""
+        try:
+            # Set up initial configuration
+            self.conversations: Dict = {}
+            self.logger = logging.getLogger(__name__)
 
-        self.config = AppConfig()
-        self.image_handler = ImageHandler(storage_type="local")
-        self.style_manager = AIStyleManager()
-        load_dotenv()
+            # Load environment variables
+            load_dotenv()
 
-        # Initialize API clients with proper error handling
-        self._initialize_api_clients()
+            # Initialize core components
+            self.config = AppConfig()
+            self.image_handler = ImageHandler(storage_type="local")
+            self.style_manager = AIStyleManager()
 
-        # Set up directories with enhanced organization
-        self.history_dir = Path("chat_histories")
-        self.exports_dir = Path("exports")
-        self.history_dir.mkdir(exist_ok=True)
-        self.exports_dir.mkdir(exist_ok=True)
+            # Initialize API clients with proper error handling
+            self._initialize_api_clients()
 
-        # Initialize token counter with style consideration
-        self.gpt_encoder = tiktoken.encoding_for_model("gpt-4")
+            # Set up directories
+            self._initialize_directories()
+
+            # Initialize token counter
+            self.gpt_encoder = tiktoken.encoding_for_model("gpt-4")
+
+            # Initialize state components
+            self._initialize_state_components()
+
+            self.logger.info("ChatHistoryManager initialized successfully")
+
+        except Exception as e:
+            self.logger.error(f"ChatHistoryManager initialization failed: {str(e)}", exc_info=True)
+            raise
+
+    def _initialize_directories(self):
+        """Initialize required directories for chat history storage."""
+        try:
+            self.history_dir = Path("chat_histories")
+            self.exports_dir = Path("exports")
+            self.history_dir.mkdir(exist_ok=True)
+            self.exports_dir.mkdir(exist_ok=True)
+
+            self.logger.debug("Directory initialization completed")
+
+        except Exception as e:
+            self.logger.error(f"Directory initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize directories: {str(e)}")
+
+    def _initialize_state_components(self):
+        """Initialize state management components."""
+        try:
+            self.analysis_queue = deque()
+            self.processing_lock = asyncio.Lock()
+            self.cache_size_limit = 50
+            self.enable_performance_logging = True
+
+            # Initialize session state for image handling if needed
+            if 'image_store' not in st.session_state:
+                st.session_state.image_store = {}
+
+            self.logger.debug("State components initialization completed")
+
+        except Exception as e:
+            self.logger.error(f"State components initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize state components: {str(e)}")
+
+    def _initialize_api_clients(self):
+        """Initialize API clients with proper error handling."""
+        try:
+            # Initialize OpenAI client
+            openai_key = os.getenv('OPENAI_API_KEY')
+            if not openai_key:
+                raise ValueError("OPENAI_API_KEY environment variable is not set")
+            self.openai = openai.OpenAI(api_key=openai_key)
+
+            # Initialize Anthropic client
+            claude_key = os.getenv('CLAUDE_API_KEY')
+            if not claude_key:
+                raise ValueError("CLAUDE_API_KEY environment variable is not set")
+            self.anthropic = Anthropic(api_key=claude_key)
+
+            # Initialize Google AI client
+            gemini_key = os.getenv('GEMINI_API_KEY')
+            if not gemini_key:
+                raise ValueError("GEMINI_API_KEY environment variable is not set")
+            genai.configure(api_key=gemini_key)
+            self.gemini = genai.GenerativeModel('gemini-pro')
+
+            self.logger.debug("API clients initialization completed")
+
+        except ValueError as ve:
+            self.logger.error(f"API client initialization failed: {str(ve)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"API client initialization failed: {str(e)}")
+            raise RuntimeError(f"Failed to initialize API clients: {str(e)}")
 
     def add_file_to_conversation(self, conv_id: str, file_data: Dict) -> None:
         """Add processed file data to a conversation."""
@@ -939,3 +1052,303 @@ class ChatHistoryManager:
         except Exception as e:
             logger.error(f"Error adding image message: {str(e)}")
             raise RuntimeError(f"Failed to add image message: {str(e)}")
+
+    async def process_message(self, conv_id: str, message: str, service_type: str = 'claude') -> ChatResponse:
+        """Asynchronously process a chat message with comprehensive error handling."""
+        processing_start = datetime.now()
+
+        try:
+            # Validate inputs
+            self._validate_message_parameters(conv_id, message)
+
+            # Get or create conversation
+            conversation = await self._get_or_create_conversation(conv_id)
+
+            # Process message through service
+            response = await self._process_through_service(
+                conversation=conversation,
+                message=message,
+                service_type=service_type
+            )
+
+            # Log performance metrics if enabled
+            if self.enable_performance_logging:
+                self._log_processing_metrics(processing_start, service_type)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Message processing failed: {str(e)}", exc_info=True)
+            await self._handle_processing_error(conv_id, e)
+            raise
+
+    async def analyze_files(self, conv_id: str, files: List[Dict]) -> Dict:
+        """Asynchronously analyze files with queuing and priority handling."""
+        try:
+            self._validate_files(files)
+
+            analysis_request = PendingAnalysis(
+                conversation_id=conv_id,
+                files=files,
+                queued_at=datetime.now()
+            )
+
+            self.analysis_queue.append(analysis_request)
+            return await self._process_analysis_queue()
+
+        except Exception as e:
+            logger.error(f"File analysis failed: {str(e)}", exc_info=True)
+            await self._handle_analysis_error(conv_id, e)
+            raise
+
+    async def _process_through_service(
+            self,
+            conversation: Dict,
+            message: str,
+            service_type: str
+    ) -> ChatResponse:
+        """Process message through appropriate AI service with retry logic."""
+        try:
+            context = self._build_message_context(conversation)
+
+            if service_type == 'claude':
+                response = await self._send_to_claude(message, context)
+            elif service_type == 'chatgpt':
+                response = await self._send_to_chatgpt(message, context)
+            else:
+                raise ValueError(f"Unsupported service type: {service_type}")
+
+            # Update conversation history
+            await self._add_message_to_history(
+                conversation=conversation,
+                content=response.content,
+                role="assistant",
+                service_type=service_type
+            )
+
+            return response
+
+        except asyncio.TimeoutError:
+            logger.error("Service timeout error")
+            await self._handle_timeout_error(conversation)
+            raise
+        except Exception as e:
+            logger.error(f"Service processing error: {str(e)}", exc_info=True)
+            await self._handle_service_error(conversation, e)
+            raise
+
+    async def _process_analysis_queue(self) -> Optional[Dict]:
+        """Process pending file analyses with proper locking and error handling."""
+        async with self.processing_lock:
+            try:
+                if not self.analysis_queue:
+                    return None
+
+                analysis_request = self.analysis_queue.popleft()
+                result = await self._perform_file_analysis(analysis_request)
+
+                await self._update_conversation_with_analysis(
+                    analysis_request.conversation_id,
+                    result
+                )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Analysis queue processing error: {str(e)}", exc_info=True)
+                raise
+
+    async def send_to_claude_async(self, conv_id: str, prompt: str, model: str = "claude-3-5-sonnet-20241022") -> str:
+        """Async version of send_to_claude."""
+        try:
+            conversation = self.get_conversation(conv_id)
+            messages = []
+
+            # Build context from previous messages
+            for msg in conversation.get('messages', []):
+                role = "assistant" if msg['sender'] == "assistant" else "user"
+                messages.append({
+                    "role": role,
+                    "content": msg['content']
+                })
+
+            # Add the new prompt
+            messages.append({
+                "role": "user",
+                "content": prompt
+            })
+
+            # Calculate input tokens
+            input_tokens = self.estimate_tokens(prompt)
+
+            # Add user message
+            self.add_message(conv_id, prompt, "user", "claude", model, tokens=input_tokens)
+
+            # Send request to Claude
+            response = await self.anthropic.messages.create(
+                messages=messages,
+                model=model,
+                max_tokens=1024
+            )
+
+            response_content = response.content[0].text if response and response.content else ""
+            output_tokens = self.estimate_tokens(response_content)
+
+            # Add assistant's response
+            self.add_message(conv_id, response_content, "assistant", "claude", model, tokens=output_tokens)
+
+            return response_content
+
+        except Exception as e:
+            logger.error(f"Claude API Error: {str(e)}")
+            raise RuntimeError(f"Error processing message: {str(e)}")
+
+    async def process_message_async(self, conv_id: str, message: str,
+                                    service_type: str = 'claude') -> AsyncChatResponse:
+        """Asynchronously process a chat message."""
+        processing_start = datetime.now()
+
+        try:
+            # Validate inputs
+            self._validate_message_parameters(conv_id, message)
+
+            # Get conversation
+            conversation = self.get_conversation(conv_id)
+            if not conversation:
+                conversation = await self._create_conversation_async(conv_id)
+
+            # Process through appropriate service
+            if service_type == 'claude':
+                response_content = await self.send_to_claude_async(conv_id, message)
+            elif service_type == 'chatgpt':
+                response_content = await self.send_to_chatgpt_async(conv_id, message)
+            else:
+                response_content = await self.send_to_gemini_async(conv_id, message)
+
+            # Create response object
+            response = AsyncChatResponse(
+                content=response_content,
+                service_type=service_type,
+                model=st.session_state.get('model_key', 'default'),
+                tokens=self.estimate_tokens(response_content),
+                timestamp=datetime.now().isoformat()
+            )
+
+            # Log performance if enabled
+            if self.enable_performance_logging:
+                self._log_processing_metrics(processing_start, service_type)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Message processing failed: {str(e)}", exc_info=True)
+            await self._handle_processing_error(conv_id, e)
+            raise
+
+    async def analyze_files_async(self, conv_id: str, files: List[Dict]) -> Dict:
+        """Asynchronously analyze files."""
+        try:
+            # Validate files
+            self._validate_files(files)
+
+            # Create analysis request
+            analysis_request = AsyncPendingAnalysis(
+                conversation_id=conv_id,
+                files=files,
+                queued_at=datetime.now()
+            )
+
+            # Add to queue and process
+            self.analysis_queue.append(analysis_request)
+            return await self._process_analysis_queue_async()
+
+        except Exception as e:
+            logger.error(f"File analysis failed: {str(e)}", exc_info=True)
+            await self._handle_analysis_error(conv_id, e)
+            raise
+
+    async def _process_analysis_queue_async(self) -> Optional[Dict]:
+        """Process pending file analyses asynchronously."""
+        async with self.processing_lock:
+            try:
+                if not self.analysis_queue:
+                    return None
+
+                analysis_request = self.analysis_queue.popleft()
+                result = await self._perform_file_analysis_async(analysis_request)
+
+                # Update conversation with analysis results
+                await self._update_conversation_with_analysis_async(
+                    analysis_request.conversation_id,
+                    result
+                )
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Analysis queue processing error: {str(e)}", exc_info=True)
+                raise
+
+    async def _perform_file_analysis_async(self, analysis_request: AsyncPendingAnalysis) -> Dict:
+        """Perform file analysis asynchronously."""
+        try:
+            results = []
+            for file in analysis_request.files:
+                # Process each file
+                file_result = await self._analyze_single_file_async(file)
+                results.append(file_result)
+
+            # Analyze relationships if multiple files
+            if len(results) > 1:
+                relationship_analysis = await self._analyze_file_relationships_async(results)
+                return {
+                    'individual_results': results,
+                    'relationships': relationship_analysis
+                }
+
+            return {'individual_results': results}
+
+        except Exception as e:
+            logger.error(f"File analysis error: {str(e)}", exc_info=True)
+            raise
+
+    def _validate_message_parameters(self, conv_id: str, message: str):
+        """Validate chat message parameters."""
+        if not conv_id or not isinstance(conv_id, str):
+            raise ValueError("Invalid conversation ID")
+        if not message or not isinstance(message, str):
+            raise ValueError("Invalid message content")
+
+    def _validate_files(self, files: List[Dict]):
+        """Validate file data for analysis."""
+        if not files or not isinstance(files, list):
+            raise ValueError("Invalid file list")
+
+        required_fields = {'name', 'content', 'type'}
+        for file in files:
+            if not all(field in file for field in required_fields):
+                raise ValueError(f"Missing required fields in file: {file.get('name', 'unknown')}")
+
+    async def _handle_processing_error(self, conv_id: str, error: Exception):
+        """Handle message processing errors."""
+        error_msg = f"Error processing message in conversation {conv_id}: {str(error)}"
+        logger.error(error_msg)
+
+        # Update conversation error state
+        conversation = self.get_conversation(conv_id)
+        if conversation:
+            conversation['last_error'] = {
+                'timestamp': datetime.now().isoformat(),
+                'error': str(error),
+                'type': 'processing'
+            }
+
+        # Notify error handler if available
+        if hasattr(self, 'error_handler'):
+            self.error_handler.handle_error(error, 'processing', show_message=True)
+
+    def _log_processing_metrics(self, start_time: datetime, service_type: str):
+        """Log performance metrics."""
+        processing_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Message processed by {service_type} in {processing_time:.2f} seconds")
+

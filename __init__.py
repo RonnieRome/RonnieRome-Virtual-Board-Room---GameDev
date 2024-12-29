@@ -33,7 +33,7 @@ class AppComponents:
             'ai_service': 'claude',
             'analysis_results': [],
             'show_code_popup': False,
-            'theme': 'Pastel Delight',
+            'theme': 'Transparent',
             'uploaded_files': [],
             'clipboard_image': None,
             'show_reset_confirm': False
@@ -48,7 +48,7 @@ class AppComponents:
         try:
             # Apply theme first
             self.service_manager.theme_manager.apply_theme(
-                st.session_state.get('theme', 'Pastel Delight')
+                st.session_state.get('theme', 'Transparent')
             )
 
             # Render components
