@@ -145,22 +145,24 @@ class AsyncAppRunner:
             self._handle_critical_error(e)
 
     def _render_analysis_panel(self):
+        """Render the analysis panel with mouse tracking and auto-hide support."""
+        panel_html = """
+        <div id="analysis-panel"
+             onmouseover="handle_mouse_over(true)"
+             onmouseout="handle_mouse_over(false)"
+             style="background-color: #f8f9fa; padding: 20px; border: 1px solid #ccc; border-radius: 4px;">
+             <h3>Analysis Panel</h3>
+             <p>Your analysis results will be displayed here.</p>
+        </div>
+
+        <script>
+            function handle_mouse_over(isOver) {
+                const message = { 'type': 'streamlit:mouseOverPanel', 'isOver': isOver };
+                window.parent.postMessage(message, '*');
+            }
+        </script>
         """
-        Handles the rendering of the analysis panel with proper state management.
-        This method coordinates the display of analysis results and loading states.
-        """
-        panel_state = st.session_state.get('analysis_panel_state', {})
-
-        if panel_state.get('loading'):
-            with st.spinner("Analyzing files..."):
-                st.empty()
-
-        elif panel_state.get('error'):
-            st.error(f"Analysis Error: {panel_state['error']}")
-
-        elif panel_state.get('analysis_results'):
-            results = panel_state['analysis_results']
-            self.app_manager.analysis_panel.render_results(results)
+        st.markdown(panel_html, unsafe_allow_html=True)
 
     def _handle_critical_error(self, error: Exception) -> None:
         """Handle critical application errors with proper user notification."""

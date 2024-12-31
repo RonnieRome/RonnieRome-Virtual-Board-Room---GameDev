@@ -1,23 +1,23 @@
 import streamlit as st
 import logging
+import asyncio
 from typing import Optional, Dict, List
 from datetime import datetime
 
 from config.app_config import AppConfig
 from config.styles import StyleConfig
-from components.sidebar import Sidebar
+from components.analysis_panel import AnalysisPanel
 from components.chat_area import ChatArea
 from components.error_handler import ErrorHandler
-from components.theme_manager import ThemeManager
 from components.export_manager import ExportManager
+from components.file_analyzer import FileAnalyzer
+from components.sidebar import Sidebar
 from components.state_manager import StateManager
-from components.analysis_panel import AnalysisPanel
+from components.theme_manager import ThemeManager
 from services.ai_analysis_integration import AIAnalysisManager
 from services.service_manager import ServiceManager
 
-
 logger = logging.getLogger(__name__)
-
 
 class AppManager:
     def __init__(self):
@@ -50,6 +50,22 @@ class AppManager:
             logger.error(f"Critical initialization error: {str(e)}", exc_info=True)
             self._handle_initialization_error(e)
             raise
+
+    def _initialize_panel_state(self):
+        """Initialize the analysis panel state variables."""
+        initial_state = {
+            'panel_visible': False,
+            'selected_file': None,
+            'analysis_results': None,
+            'analysis_loading': False,
+            'error_message': None,
+            'last_update': None,
+            'active_tab': 'summary'
+        }
+
+        for key, value in initial_state.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
 
     def initialize_core_components(self) -> None:
         """Initialize core components without page configuration."""
@@ -87,6 +103,9 @@ class AppManager:
                 from services.chat_manager import ChatHistoryManager
                 self.service_manager.chat_manager = ChatHistoryManager()
 
+            # Initialize file analyzer
+            self.file_analyzer = FileAnalyzer()
+
             # Initialize AI Analysis with retry capability
             self.ai_manager = AIAnalysisManager(self.service_manager)
 
@@ -112,27 +131,35 @@ class AppManager:
             raise RuntimeError(f"Failed to initialize managers: {str(e)}")
 
     def _initialize_ui_components(self):
-        """Initialize UI components with proper error handling."""
+        """Initialize UI components with proper error handling and file handling integration."""
         try:
             # Initialize UI components with required dependencies
             self.sidebar = Sidebar(self.service_manager, self.state_manager)
             self.chat_area = ChatArea(self.service_manager, self.theme_manager)
 
-            # Initialize analysis panel with enhanced capabilities
+            # Initialize analysis panel state
+            self._initialize_panel_state()
+
+            # Initialize analysis panel
             self.analysis_panel = AnalysisPanel(
                 state_manager=self.state_manager,
-                ai_manager=self.ai_manager
+                ai_manager=self.ai_manager,
+                service_manager=self.service_manager
             )
 
+            # Set up file handling integration using synchronous registration
+            def sync_file_handler(files):
+                asyncio.create_task(self.handle_file_upload(files))
+
+            self.service_manager.register_file_handler(sync_file_handler)
+
             logger.info("UI components initialized successfully")
-
         except Exception as e:
-            logger.error(f"UI component initialization error: {str(e)}", exc_info=True)
-            raise RuntimeError(f"Failed to initialize UI components: {str(e)}")
-
+            logger.error(f"UI components initialization error: {str(e)}", exc_info=True)
+            raise
 
     async def handle_file_analysis(self, conv_id: str, files: List[Dict]) -> Dict:
-        """Handle file analysis with comprehensive error handling and retry logic."""
+        """Handle file analysis with comprehensive error handling."""
         try:
             logger.info(f"Starting file analysis for conversation {conv_id}")
 
@@ -144,18 +171,23 @@ class AppManager:
             self.state_manager.set_state('analysis_in_progress', True)
             self.state_manager.set_state('current_analysis_files', [f['name'] for f in files])
 
-            # Perform analysis with retries
-            analysis_result = await self.ai_manager.analyze_files(conv_id, 'code_review')
+            # Process files through FileAnalyzer
+            analysis_results = self.file_analyzer.analyze_file_batch(files)
 
-            # Handle analysis completion
-            if analysis_result.status == 'success':
-                self._handle_successful_analysis(analysis_result, conv_id)
-            else:
-                self._handle_failed_analysis(analysis_result, conv_id)
+            # Get AI insights for the files
+            ai_context = self.file_analyzer.get_ai_context()
+            ai_results = await self.ai_manager.analyze_files(conv_id, 'code_review', ai_context)
+
+            # Combine analysis results
+            combined_results = {
+                'file_analysis': analysis_results,
+                'ai_insights': ai_results,
+                'timestamp': datetime.now().isoformat()
+            }
 
             return {
-                'status': analysis_result.status,
-                'result': analysis_result,
+                'status': 'success',
+                'result': combined_results,
                 'timestamp': datetime.now().isoformat()
             }
 
@@ -168,6 +200,61 @@ class AppManager:
             # Clean up state
             self.state_manager.set_state('analysis_in_progress', False)
             self.state_manager.set_state('current_analysis_files', None)
+
+    async def handle_file_upload(self, files: List[Dict]) -> None:
+        """Handle file upload and trigger analysis asynchronously."""
+        try:
+            if not files:
+                logger.warning("No files provided for upload")
+                return
+
+            # Get current conversation ID
+            conv_id = st.session_state.get('selected_conv')
+            if not conv_id:
+                logger.warning("No conversation selected for file upload")
+                st.error("Please select or start a conversation first")
+                return
+
+            # Update UI state to show loading
+            st.session_state.analysis_loading = True
+
+            try:
+                # Process files asynchronously
+                processed_files = await self.service_manager.handle_file_upload(files, conv_id)
+
+                # Update conversation with processed files
+                await self.service_manager.chat_manager.update_conversation_files_async(conv_id, processed_files)
+
+                # Perform file analysis
+                st.session_state.analysis_loading = True
+                analysis_results = await self.handle_file_analysis(conv_id, processed_files)
+
+                # Update session state with results
+                st.session_state.analysis_results = analysis_results['result']
+                st.session_state.selected_file = processed_files[0]['name'] if processed_files else None
+                st.session_state.panel_visible = True
+
+                # Update conversation context with file information
+                file_context = self.service_manager._prepare_file_context(processed_files)
+                await self.service_manager.context_manager.update_context_async(conv_id, {
+                    'files': file_context,
+                    'analysis': analysis_results['result']
+                })
+
+                logger.info(f"Successfully processed and analyzed {len(files)} files")
+
+            except Exception as e:
+                logger.error(f"Error processing files: {str(e)}", exc_info=True)
+                st.error(f"Error processing files: {str(e)}")
+
+            finally:
+                st.session_state.analysis_loading = False
+
+        except Exception as e:
+            logger.error(f"Error in file upload handling: {str(e)}", exc_info=True)
+            st.error("An error occurred during file upload. Please try again.")
+            st.session_state.analysis_loading = False
+            raise
 
     def _handle_analysis_error(self, error: Exception, conv_id: str):
         """Handle unexpected analysis errors."""
@@ -245,31 +332,14 @@ class AppManager:
             raise
 
     def render(self):
-        """Render the application interface with enhanced error handling."""
-        try:
-            # Create main layout
-            main_col, panel_col = st.columns([7, 3])
+        """Render the main application interface."""
+        self.sidebar.render()
+        self.chat_area.render()
 
-            with main_col:
-                # Render sidebar and chat area
-                self.sidebar.render()
-                current_theme = st.session_state.get('theme', 'Transparent')
-                theme_css = StyleConfig.get_theme_css(current_theme)
-                self.chat_area.render(theme_css)
+    def _toggle_panel(self):
+        """Toggle analysis panel visibility"""
+        st.session_state.panel_visible = not st.session_state.get('panel_visible', False)
 
-            with panel_col:
-                # Render analysis panel if available
-                if hasattr(self, 'analysis_panel'):
-                    self.analysis_panel.render(StyleConfig)
-
-        except Exception as e:
-            logger.error(f"Error during render: {str(e)}", exc_info=True)
-            self.error_handler.handle_error(
-                error=e,
-                error_type='render',
-                context={'operation': 'render'},
-                show_message=True
-            )
 
     def _initialize_session_state(self):
         """Initialize session state with default values."""

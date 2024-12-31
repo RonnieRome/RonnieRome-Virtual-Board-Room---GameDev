@@ -2,9 +2,15 @@ import streamlit as st
 import base64
 import logging
 import logger
+
+from datetime import datetime
 from config.app_config import AppConfig
 from config.ai_style_manager import AIStyleManager
-from datetime import datetime
+from components.analysis_panel import AnalysisPanel
+from services.ai_analysis_integration import AIAnalysisManager
+
+
+
 
 
 class Sidebar:
@@ -45,6 +51,14 @@ class Sidebar:
         self.config = AppConfig()
         self.style_manager = AIStyleManager()
 
+        ai_analysis_manager = AIAnalysisManager(service_manager=self.service_manager)
+
+        self.analysis_panel = AnalysisPanel(
+            state_manager=self.state_manager,
+            service_manager=self.service_manager,
+            ai_manager=None
+        )
+
     def render(self):
         """Render the complete sidebar interface."""
         """Render the complete sidebar interface."""
@@ -52,8 +66,12 @@ class Sidebar:
             try:
                 self._render_control_buttons()
                 self._render_file_upload()
+                if st.session_state.get('show_analysis_popup', False):
+                    self.analysis_panel.render_analysis_popup()
                 self._render_conversation_section()
-                self._render_ai_service_section()
+                self._render_conversation_controls()
+                #self._render_ai_service_section()
+                self._render_code_generate()
                 self._render_token_display()
             except Exception as e:
                 st.error(f"Error rendering sidebar: {str(e)}")
@@ -90,11 +108,11 @@ class Sidebar:
                     st.session_state.show_reset_confirm = False
                     st.rerun()
 
+
     def _render_file_upload(self):
         """Render file upload section with debug information for file types."""
-        # Debug: Print supported file types
         supported_types = self.config.get_supported_file_types()
-        print(f"Supported file types: {supported_types}")  # Debug line
+        #print(f"Supported file types: {supported_types}")  # Debug line
 
         uploaded_files = st.file_uploader(
             "Import Files",
@@ -103,17 +121,31 @@ class Sidebar:
             help="Upload program files, documents, or data files"  # Added helpful tooltip
         )
 
-        col1, col2 = st.columns([1, 1])
+        col1, col2 = st.sidebar.columns([1, 1])  # Equal-width columns
         with col1:
-            submit_button = st.button("📤 Submit Files")
+            submit_button = st.button("📤 Submit Files", use_container_width=True)
         with col2:
-            paste_button = st.button("📎 Paste Scr")
+            paste_button = st.button("📎 Paste Scr", use_container_width=True)
 
         if uploaded_files and submit_button:
             self._handle_file_upload(uploaded_files)
 
         if paste_button:
             self._handle_paste_button()
+
+        #st.write("")
+        col = st.columns([1])
+        with col[0]:
+            analyze_button = st.button("🔍 Analyze", use_container_width=True)
+
+        if analyze_button:
+            if not st.session_state.get('selected_conv'):
+                st.error("Please select a conversation first")
+                return
+
+            # Trigger analysis popup via AnalysisPanel
+            st.session_state.show_analysis_popup = True
+            st.rerun()
 
 
     def _render_conversation_section(self):
@@ -123,14 +155,16 @@ class Sidebar:
 
         # New conversation input
         new_title = st.text_input("New Conversation Title")
-        if st.button("Create New Conversation"):
-            if new_title:
-                # Changed from self.chat_manager to self.service_manager.chat_manager
-                conv_id = self.service_manager.chat_manager.create_conversation(new_title)
-                st.session_state.selected_conv = conv_id
-                st.rerun()
-            else:
-                st.warning("Please enter a title")
+        col = st.columns([1])  # Single column spanning full width
+        with col[0]:
+            if st.button("Create New Conversation", use_container_width=True):
+                if new_title:
+                    # Changed from self.chat_manager to self.service_manager.chat_manager
+                    conv_id = self.service_manager.chat_manager.create_conversation(new_title)
+                    st.session_state.selected_conv = conv_id
+                    st.rerun()
+                else:
+                    st.warning("Please enter a title")
 
         # Conversation selector
         conversations = self.service_manager.chat_manager.list_conversations()
@@ -141,8 +175,8 @@ class Sidebar:
                 index=conversations.index(st.session_state.selected_conv)
                 if 'selected_conv' in st.session_state and
                 st.session_state.selected_conv in conversations
-                else 0
-            )
+                else 0)
+
             if selected != st.session_state.get('selected_conv'):
                 st.session_state.selected_conv = selected
                 st.rerun()
@@ -167,11 +201,10 @@ class Sidebar:
                 "Select Chat",
                 conversations,
                 index=conversations.index(st.session_state.selected_conv)
-                if st.session_state.selected_conv in conversations else 0
-            )
+                if st.session_state.selected_conv in conversations else 0)
 
             if st.session_state.selected_conv:
-                self._render_ai_service_selection()
+                self._render_ai_service_section()
 
 
     def _render_ai_service_section(self):
@@ -187,9 +220,9 @@ class Sidebar:
                 list(self.SERVICES.keys()),
                 format_func=lambda x: self.SERVICES[x],
                 index=0 if 'ai_service' not in st.session_state else
-                list(self.SERVICES.keys()).index(st.session_state.ai_service.lower())
+                list(self.SERVICES.keys()).index(st.session_state.ai_service.lower()),
+                key="unique_radio_ai_service"
             )
-
         if selected_service != st.session_state.get('ai_service'):
             st.session_state.ai_service = selected_service
             st.rerun()
@@ -201,8 +234,10 @@ class Sidebar:
                 "Select Model",
                 list(current_model_options.keys()),
                 format_func=lambda x: current_model_options[x],
-                index=0
+                index=0,
+                key="radio_model_selection"
             )
+
         st.session_state.model_key = selected_model
 
         st.write("")
@@ -229,13 +264,14 @@ class Sidebar:
                 }
                 </style>
                 """,
-                unsafe_allow_html=True,
-            )
+                unsafe_allow_html=True)
+
             selected_style = st.radio(
                 "**Select Style**",
                 list(style_descriptions.keys()),
-                key="style_selector",
-            )
+                key="style_selector")
+
+
         # Column 2: Style details
         with style_col2:
             st.markdown(
@@ -282,6 +318,40 @@ class Sidebar:
                     """,
                     unsafe_allow_html=True,
                 )
+
+
+    def _render_code_generate(self):
+        """Render simplified analysis section in sidebar."""
+        st.divider()
+        st.header("Code Generation")
+
+        # Create two columns for the code generation interface
+        prompt_col, button_col = st.columns([2, 1])
+
+        with prompt_col:
+            custom_prompt = st.text_area(
+                "Enter your prompt",
+                key="code_gen_prompt",
+                height=100
+            )
+
+        with button_col:
+            # Center the button both vertically and horizontally
+            st.markdown(
+                """
+                <style>
+                div[data-testid="column"] {
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100px;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            generate_button = st.button("Generate", key="generate_code_button")
+
 
     def _render_token_display(self):
         """Display token usage statistics for the current conversation.
@@ -355,41 +425,7 @@ class Sidebar:
         except Exception as e:
             st.error(f"Error processing files: {str(e)}")
 
-    def _handle_paste_button(self):
-        """Handle pasting image from clipboard with proper error handling."""
-        try:
-            # Get clipboard image using chat manager
-            success, data, error_message = self.service_manager.chat_manager.get_clipboard_image()
 
-            if success and data:
-                # Encode image data
-                image_base64 = base64.b64encode(data).decode()
-
-                # Display image in chat
-                with st.chat_message("user"):
-                    st.image(data, caption="Pasted from clipboard", use_container_width=True)
-
-                # Store in session state
-                st.session_state.clipboard_image = image_base64
-
-                # Add to conversation if one is selected
-                if st.session_state.selected_conv:
-                    self.service_manager.chat_manager.add_image_message(
-                        st.session_state.selected_conv,
-                        image_base64,
-                        "Pasted image from clipboard",
-                        "user"
-                    )
-                    st.success("Image successfully pasted and added to conversation")
-                else:
-                    st.warning("Please select a conversation first to save the image")
-
-            else:
-                st.error(error_message or "Failed to get image from clipboard")
-
-        except Exception as e:
-            logger.error(f"Error in paste button handler: {str(e)}")
-            st.error(f"Error processing clipboard image: {str(e)}")
 
     def _handle_reset_input(self):
         """
@@ -442,6 +478,44 @@ class Sidebar:
         except Exception as e:
             st.error(f"Error during reset: {str(e)}")
             logging.error(f"Reset error: {str(e)}")
+
+
+    def _handle_paste_button(self):
+        """Handle pasting image from clipboard with proper error handling."""
+        try:
+            # Get clipboard image using chat manager
+            success, data, error_message = self.service_manager.chat_manager.get_clipboard_image()
+
+            if success and data:
+                # Encode image data
+                image_base64 = base64.b64encode(data).decode()
+
+                # Display image in chat
+                with st.chat_message("user"):
+                    st.image(data, caption="Pasted from clipboard", use_container_width=True)
+
+                # Store in session state
+                st.session_state.clipboard_image = image_base64
+
+                # Add to conversation if one is selected
+                if st.session_state.selected_conv:
+                    self.service_manager.chat_manager.add_image_message(
+                        st.session_state.selected_conv,
+                        image_base64,
+                        "Pasted image from clipboard",
+                        "user"
+                    )
+                    st.success("Image successfully pasted and added to conversation")
+                else:
+                    st.warning("Please select a conversation first to save the image")
+
+            else:
+                st.error(error_message or "Failed to get image from clipboard")
+
+        except Exception as e:
+            logger.error(f"Error in paste button handler: {str(e)}")
+            st.error(f"Error processing clipboard image: {str(e)}")
+
 
     def _handle_file_upload(self, uploaded_files):
         """
@@ -592,3 +666,45 @@ class Sidebar:
                 }
             )
             st.error(f"An unexpected error occurred during file upload: {str(e)}")
+
+    def _get_prompt_template(self, template_name, filename):
+        """Get the prompt template based on selection."""
+        templates = {
+            "Generate unit tests": f"Generate comprehensive unit tests for the code in {filename}. Include test cases for edge cases and error conditions.",
+            "Create documentation": f"Create detailed documentation for the code in {filename}. Include function descriptions, parameters, return values, and usage examples.",
+            "Optimize code": f"Analyze the code in {filename} for performance optimizations. Suggest and implement improvements while maintaining readability.",
+            "Add error handling": f"Add robust error handling to the code in {filename}. Include try-catch blocks and appropriate error messages.",
+            "Refactor code": f"Refactor the code in {filename} to improve maintainability. Apply SOLID principles and design patterns where appropriate."
+        }
+        return templates.get(template_name, "")
+
+    def _handle_code_generation(self, filename, prompt):
+        """Handle code generation request."""
+        try:
+            st.session_state.code_generation_loading = True
+
+            # Get the file content
+            conversation = self.service_manager.chat_manager.get_conversation(
+                st.session_state.selected_conv
+            )
+            stored_files = conversation.get('stored_files', [])
+            file_content = next(
+                (f['content'] for f in stored_files if f['name'] == filename),
+                None
+            )
+
+            if file_content:
+                # Use AI service to generate code
+                generated_code = self.service_manager.ai_manager.generate_code(
+                    file_content,
+                    prompt
+                )
+                st.session_state.generated_code = generated_code
+            else:
+                st.error("Failed to retrieve file content")
+
+        except Exception as e:
+            st.error(f"Error generating code: {str(e)}")
+
+        finally:
+            st.session_state.code_generation_loading = False

@@ -13,6 +13,7 @@ from components.error_handler import ErrorHandler
 from components.file_analyzer import FileAnalyzer
 from services.document_manager import DocumentManager
 from services.file_manager import FileManager
+from services.ai_analysis_integration import AIAnalysisManager, AIAnalysisResponse
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ class ServiceManager:
         # Initialize logger first before any other operations
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
+        self.file_handlers = []
+        self.ai_analysis_manager = AIAnalysisManager(self)  # Add this line
+        self.chat_manager = ChatHistoryManager()
 
         try:
             # Initialize core services first
@@ -44,10 +48,20 @@ class ServiceManager:
                 self.logger.error(f"ServiceManager initialization failed: {str(e)}", exc_info=True)
             self._handle_initialization_error(e)
 
+    async def handle_ai_analysis(self, conv_id: str, analysis_type: str = 'code_review') -> AIAnalysisResponse:
+        """Handle AI analysis requests through the service manager."""
+        try:
+            return await self.ai_analysis_manager.analyze_files(conv_id, analysis_type)
+        except Exception as e:
+            logging.error(f"Error in AI analysis: {str(e)}")
+            raise
 
     def _initialize_core_services(self):
         """Initialize core services that other services depend on."""
         try:
+            # Initialize file handler registry
+            self.file_handlers = []
+
             # Initialize configuration and logging first
             self.config = AppConfig()
             self.logging_service = LoggingService()
@@ -59,9 +73,8 @@ class ServiceManager:
             self.style_config = StyleConfig()
 
             self.logger.debug("Core services initialized successfully")
-
         except Exception as e:
-            self.logger.error(f"Core services initialization failed: {str(e)}")
+            self.logger.error(f"Error initializing core services: {str(e)}", exc_info=True)
             raise RuntimeError(f"Failed to initialize core services: {str(e)}")
 
     def _initialize_chat_manager(self):
@@ -158,6 +171,25 @@ class ServiceManager:
             logger.error(f"Error in handle_file_upload: {str(e)}", exc_info=True)
             self._handle_upload_error(e, conv_id)
             return []
+
+    async def register_file_handler(self, handler: callable) -> None:
+        """
+        Register a handler function for file uploads.
+
+        Args:
+            handler: The function that will process uploaded files.
+                    Should accept a list of file dictionaries as argument.
+
+        Raises:
+            TypeError: If handler is not callable
+        """
+        if not callable(handler):
+            error_msg = "File handler must be a callable function"
+            self.logger.error(error_msg)
+            raise TypeError(error_msg)
+
+        self.file_handlers.append(handler)
+        self.logger.info("File handler registered successfully")
 
     async def _process_single_file(self, file: Any, conv_id: str) -> Dict:
         """Process a single file asynchronously."""
@@ -419,16 +451,6 @@ class ServiceManager:
         messages.insert(0, {
             'role': 'system',
             'content': f"The following files are part of this conversation:\n\n{file_context}"
-        })
-        return messages
-
-    def _inject_file_context(self, messages: List[Dict], file_context: str) -> List[Dict]:
-        """Insert file context into message history."""
-        if not messages:
-            messages = []
-        messages.insert(0, {
-            'role': 'system',
-            'content': f"The following files have been uploaded:\n\n{file_context}"
         })
         return messages
 
