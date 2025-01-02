@@ -1,7 +1,20 @@
-.env
-chat_histories/
-exports/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-.venv
-Reserve
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+
+# Virtual environments
+.env
+.venv/
+
+# System files
+.DS_Store
+Thumbs.db
+
+#exports
+api_test.py
+just_Test.py
+file_analysis_log.txt
